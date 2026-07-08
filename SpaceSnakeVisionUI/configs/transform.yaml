@@ -1,0 +1,7 @@
+transform:
+  enable_camera_to_base: false
+  camera_frame: "camera_color_optical_frame"
+  robot_base_frame: "robot_base"
+  T_base_camera:
+    translation: {x: 0.0, y: 0.0, z: 0.0}
+    rotation_euler: {roll: 0.0, pitch: 0.0, yaw: 0.0}

@@ -1,0 +1,34 @@
+.venv/
+**/.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.codex_pycache/
+
+*.log
+*.tmp
+*.bak
+
+# Runtime data and command bridge traffic
+SpaceSnakeVisionUI/data/outbox/
+SpaceSnakeVisionUI/data/inbox/
+SpaceSnakeVisionUI/data/logs/
+SpaceSnakeVisionUI/data/recordings/
+snake_vision_d405_target/data/output/
+
+# YOLO training artifacts and collected images
+SpaceSnakeVisionUI/runs/
+SpaceSnakeVisionUI/datasets/marker_targets/images/
+SpaceSnakeVisionUI/datasets/marker_targets/labels/
+
+# Large generated archives
+*.zip
+
+# Downloadable base weights; keep trained UI marker model under SpaceSnakeVisionUI/models/
+yolo11n.pt
+SpaceSnakeVisionUI/yolo11n.pt

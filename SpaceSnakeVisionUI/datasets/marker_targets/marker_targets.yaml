@@ -1,0 +1,7 @@
+path: datasets/marker_targets
+train: images/train
+val: images/val
+names:
+  0: "201"
+  1: "222"
+  2: "207"

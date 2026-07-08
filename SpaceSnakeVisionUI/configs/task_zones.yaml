@@ -1,0 +1,21 @@
+zones:
+  Assembly_Port_A:
+    display_name: "装配接口 A"
+    frame_id: "robot_base"
+    position: {x: 0.35, y: 0.10, z: 0.20}
+    orientation_euler: {roll: 0.0, pitch: 0.0, yaw: 0.0}
+  Assembly_Port_B:
+    display_name: "装配接口 B"
+    frame_id: "robot_base"
+    position: {x: 0.35, y: -0.10, z: 0.20}
+    orientation_euler: {roll: 0.0, pitch: 0.0, yaw: 0.0}
+  Holding_Zone:
+    display_name: "临时停放区"
+    frame_id: "robot_base"
+    position: {x: 0.20, y: 0.00, z: 0.15}
+    orientation_euler: {roll: 0.0, pitch: 0.0, yaw: 0.0}
+  Safe_Zone:
+    display_name: "安全等待区"
+    frame_id: "robot_base"
+    position: {x: 0.10, y: 0.00, z: 0.30}
+    orientation_euler: {roll: 0.0, pitch: 0.0, yaw: 0.0}

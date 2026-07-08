@@ -1,0 +1,11 @@
+numpy
+opencv-contrib-python
+PySide6==6.9.2
+pyrealsense2
+pydantic
+pyyaml
+scipy
+websockets
+loguru
+pytest
+ultralytics

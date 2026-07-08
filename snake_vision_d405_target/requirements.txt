@@ -1,0 +1,8 @@
+numpy
+opencv-python
+opencv-contrib-python
+pyyaml
+scipy
+matplotlib
+scikit-learn
+pyrealsense2

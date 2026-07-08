@@ -1,0 +1,90 @@
+camera:
+  width: 848
+  height: 480
+  fps: 30
+  use_realsense: true
+  infrared_left_index: 1
+  infrared_right_index: 2
+paths:
+  stereo_params: "config/stereo_params.yaml"
+  target_config: "config/target_config.yaml"
+  target_database: "config/target_database.yaml"
+  output_json_dir: "data/output/json"
+  output_image_dir: "data/output/images"
+  debug_dir: "data/output/debug"
+  log_dir: "data/output/logs"
+rectification:
+  alpha: 0
+  draw_epipolar_lines: true
+  epipolar_line_gap: 40
+circle_detection:
+  use_roi: true
+  left_roi: [345, 170, 160, 115]
+  right_roi: [360, 170, 130, 110]
+  threshold_mode: "manual"
+  threshold_value: 35
+  binary_inverse: false
+  gaussian_kernel: 3
+  min_area: 30
+  max_area: 300
+  min_circularity: 0.75
+  min_aspect: 0.6
+  max_aspect: 1.4
+  expected_points: 8
+  min_points: 6
+  debug_show_binary: false
+  debug_print: true
+stereo_matching:
+  y_threshold_px: 2.5
+  min_disparity_px: 1.0
+  max_disparity_px: 250.0
+  uniqueness_check: true
+target:
+  expected_points_per_target: 8
+  min_points_for_pose: 6
+  cluster_eps_m: 0.08
+  cluster_min_samples: 4
+  max_plane_rmse_m: 0.005
+target_learning:
+  num_frames: 30
+  min_dots: 6
+  max_dots: 12
+  depth_window_size: 5
+  max_plane_rmse_m: 0.01
+  max_frame_match_error_m: 0.02
+target_matching:
+  max_match_error_m: 0.015
+  unknown_if_error_larger: true
+  allow_rotation: true
+marker_detection:
+  use_roi: false
+  max_candidates: 240
+  cluster_radius_px: 90.0
+  min_cluster_span_px: 12.0
+  max_cluster_span_px: 240.0
+  max_clusters: 8
+  lost_after_frames: 5
+marker_yolo:
+  min_dots_for_bearing: 2
+  min_dots_for_pose: 6
+  roi_pad_px: 30
+  use_board_mask: true
+  board_mask_pad_px: 10
+  adaptive_dot_threshold: true
+  pose_hold_seconds: 0.35
+  class_to_target_id:
+    "201": "target_1"
+    "222": "target_2"
+    "207": "target_3"
+pose_estimation:
+  method: "template_kabsch_with_pca_fallback"
+  max_pose_rmse_m: 0.015
+  smoothing_alpha: 0.3
+depth:
+  min_depth_m: 0.10
+  max_depth_m: 1.50
+output:
+  save_json: true
+  print_json: true
+  smooth_result: true
+  smoothing_alpha: 0.2
