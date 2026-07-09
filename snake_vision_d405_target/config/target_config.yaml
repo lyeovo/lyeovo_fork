@@ -1,0 +1,9 @@
+targets:
+  default_9dot:
+    description: "默认 9 圆点靶标，前期只用于显示，不强制用于 PnP"
+    expected_points: 9
+    unit: "m"
+    use_for_identification: false
+identification:
+  enabled: false
+  method: "relative_layout"

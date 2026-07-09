@@ -1,0 +1,10 @@
+camera:
+  type: "realsense_d405"
+  color_width: 640
+  color_height: 480
+  depth_width: 640
+  depth_height: 480
+  fps: 30
+  align_depth_to_color: true
+  enable_depth: true
+  enable_color: true

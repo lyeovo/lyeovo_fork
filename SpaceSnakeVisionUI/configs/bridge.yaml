@@ -1,0 +1,15 @@
+bridge:
+  mode: "file"
+  file:
+    outbox_dir: "data/outbox"
+    inbox_dir: "data/inbox"
+    atomic_write: true
+    status_file_mode: "multi_file"
+  websocket:
+    host: "127.0.0.1"
+    port: 8765
+  ros2:
+    enabled: false
+    task_command_topic: "/space_snake/task_command"
+    task_status_topic: "/space_snake/task_status"
+    message_type: "std_msgs/String"
