@@ -9,40 +9,140 @@ QFrame, QGroupBox {
     border: 1px solid #1E88E5;
     border-radius: 6px;
 }
-QGroupBox {
-    margin-top: 18px;
-    padding: 10px;
+QFrame#CardFrame {
+    background: #0B1228;
+    border: 1px solid #1E4D8C;
+    border-radius: 6px;
+}
+QFrame#ActionToolbar {
+    background: #0B1736;
+    border: 1px solid #00E5FF;
+    border-radius: 6px;
+}
+QLabel#HeaderTitle {
+    font-size: 17px;
+    font-weight: 700;
+    color: #00E5FF;
+    letter-spacing: 1px;
+}
+QLabel#SubsystemsStatus {
+    color: #2EEA8A;
+    font-family: Consolas, "JetBrains Mono";
+    font-size: 12px;
+}
+QLabel#ClockLabel {
+    color: #FFC857;
+    font-family: Consolas, "JetBrains Mono";
+    font-weight: 700;
+}
+QLabel#MissionTitleLabel {
+    color: #EAF6FF;
     font-weight: 600;
 }
-QGroupBox::title {
-    subcontrol-origin: margin;
-    left: 12px;
+QLabel#PhaseLabel {
     color: #00E5FF;
+    font-family: Consolas;
+    font-weight: 600;
+}
+QLabel#SubheaderLabel {
+    font-size: 12px;
+    font-weight: 700;
+    color: #00E5FF;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+}
+QLabel#TelemetryLabel {
+    color: #8FA6C8;
+    font-family: Consolas, "JetBrains Mono";
+    font-size: 12px;
+}
+QLabel#ActionHintLabel {
+    color: #00E5FF;
+    font-weight: 600;
+}
+QLabel#StatusOnline {
+    color: #2EEA8A;
+    font-weight: 700;
+    font-family: Consolas;
 }
 QPushButton {
     background: #10224A;
     border: 1px solid #00E5FF;
     border-radius: 4px;
-    padding: 7px 10px;
+    padding: 6px 12px;
 }
 QPushButton:hover { background: #14346E; }
 QPushButton:disabled { color: #51617D; border-color: #1B2A4A; }
-QPushButton#dangerButton {
-    background: #3A1020;
-    border-color: #FF4D5A;
-    color: #FFB8BE;
+QPushButton#BtnPrimaryAction {
+    background: #0088AA;
+    color: #FFFFFF;
     font-weight: 700;
-}
-QPushButton#sidebarToggleButton {
-    background: #0B1736;
     border: 1px solid #00E5FF;
-    border-radius: 4px;
-    color: #00E5FF;
-    font-weight: 700;
-    padding: 6px 4px;
+    padding: 7px 16px;
 }
-QPushButton#sidebarToggleButton:hover {
-    background: #14346E;
+QPushButton#BtnPrimaryAction:hover {
+    background: #00A8D0;
+}
+QPushButton#BtnYes {
+    background: #104A2C;
+    border-color: #2EEA8A;
+    color: #2EEA8A;
+    font-weight: 700;
+}
+QPushButton#BtnYes:hover {
+    background: #176B3F;
+}
+QPushButton#BtnNo {
+    background: #4A2810;
+    border-color: #FFC857;
+    color: #FFC857;
+    font-weight: 700;
+}
+QPushButton#BtnNo:hover {
+    background: #6E3C17;
+}
+QPushButton#NavEstopBtn {
+    background: #501018;
+    border: 2px solid #FF4D5A;
+    border-radius: 6px;
+    color: #FF8890;
+    font-weight: 700;
+}
+QPushButton#NavEstopBtn:hover {
+    background: #801824;
+    color: #FFFFFF;
+}
+QPushButton[objectName^="NavBtn_"] {
+    background: #0B1530;
+    border: 1px solid #163060;
+    border-radius: 6px;
+    color: #8FA6C8;
+    font-size: 11px;
+    font-weight: 700;
+    text-align: center;
+}
+QPushButton[objectName^="NavBtn_"]:hover {
+    background: #142858;
+    color: #00E5FF;
+    border-color: #00E5FF;
+}
+QPushButton[objectName^="NavBtn_"]:checked {
+    background: #0D325E;
+    color: #00E5FF;
+    border: 2px solid #00E5FF;
+}
+QProgressBar {
+    background: #0A1224;
+    border: 1px solid #1A3560;
+    border-radius: 3px;
+    text-align: center;
+    color: #EAF6FF;
+    font-size: 11px;
+    font-family: Consolas;
+}
+QProgressBar::chunk {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0088AA, stop:1 #00E5FF);
+    border-radius: 2px;
 }
 QTableWidget {
     gridline-color: #1B2A4A;
@@ -57,7 +157,7 @@ QHeaderView::section {
     color: #00E5FF;
     border: 1px solid #1B2A4A;
 }
-QComboBox, QDoubleSpinBox {
+QComboBox, QDoubleSpinBox, QSpinBox {
     background: #07122C;
     border: 1px solid #1E88E5;
     padding: 4px;
@@ -73,31 +173,4 @@ QSplitter::handle {
 }
 QSplitter::handle:hover {
     background: #00A8D8;
-}
-QSplitter::handle:horizontal {
-    width: 6px;
-}
-QSplitter::handle:vertical {
-    height: 6px;
-}
-QScrollArea#rightPanelScroll {
-    border: 1px solid #1E88E5;
-    background: #050814;
-}
-QScrollBar:vertical {
-    background: #07122C;
-    width: 14px;
-    margin: 0;
-}
-QScrollBar::handle:vertical {
-    background: #1E88E5;
-    border-radius: 5px;
-    min-height: 28px;
-}
-QScrollBar::handle:vertical:hover {
-    background: #00E5FF;
-}
-QScrollBar::add-line:vertical,
-QScrollBar::sub-line:vertical {
-    height: 0;
 }

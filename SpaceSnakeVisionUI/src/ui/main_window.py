@@ -1,22 +1,35 @@
+from __future__ import annotations
+
 import copy
 import time
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
-from PySide6.QtWidgets import QGroupBox, QLabel, QMainWindow, QPlainTextEdit, QPushButton, QScrollArea, QSplitter, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QMainWindow,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ..bridge.command_builder import build_estop_command, build_task_command
 from ..bridge.command_validator import validate_command
 from ..bridge.vision_state_publisher import VisionStatePublisher
+from ..mission.state_machine import MissionStateMachine
 from ..models import TaskCommand
+from ..state.system_state import SystemStateStore
 from ..utils.image_utils import cv_bgr_to_qpixmap
 from ..vision.pipeline import VisionPipeline
-from .camera_view import CameraViewWidget
-from .command_panel import TaskCommandPanel
-from .log_console import LogConsole
-from .mission_map import MissionMapWidget
+from .log_console import LogConsoleWidget
+from .navigation import NavigationWidget
+from .pages.control_page import ControlPage
+from .pages.mission_page import MissionPage
+from .pages.system_page import SystemPage
+from .pages.task_page import TaskPage
+from .pages.vision_page import VisionPage
 from .status_bar import MissionStatusBar
-from .task_list import TaskListWidget
 
 
 class VisionWorker(QThread):
@@ -63,6 +76,8 @@ class VisionWorker(QThread):
 
 
 class MainWindow(QMainWindow):
+    """空间蛇形机械臂任务总控台 (Mission Control HMI) 主窗口"""
+
     def __init__(
         self,
         camera,
@@ -77,153 +92,178 @@ class MainWindow(QMainWindow):
         self.camera = camera
         self.bridge = bridge
         self.bridge_status = bridge_status
-        self.project_root = project_root
-        self.objects = []
-        self.selected_id = None
+        self.project_root = Path(project_root)
+
+        # 全局状态中心与状态机
+        self.store = SystemStateStore.instance()
+        self.state_machine = MissionStateMachine(self.store)
+
+        # 视觉流发布器
+        self.vision_state_publisher = VisionStatePublisher(self.project_root / "data" / "vision")
+
+        # 运行时缓存
+        self.objects: List[Any] = []
+        self.selected_id: Optional[str] = None
         self.selected_target_snapshot = None
-        self.selected_target_locked_at: float | None = None
-        self.selected_target_last_seen_at: float | None = None
-        self.pending_command: TaskCommand | None = None
-        self.pending_target_pixmap = None
+        self.selected_target_locked_at: Optional[float] = None
+        self.selected_target_last_seen_at: Optional[float] = None
+        self.pending_command: Optional[TaskCommand] = None
         self.current_frame = None
-        self.task_list_visible = False
-        self.active_command_id: str | None = None
-        self.vision_state_publisher = VisionStatePublisher(project_root / "data" / "vision")
+
+        self.active_command_id: Optional[str] = None
         self.robot_busy = False
         self.estop_active = False
         self.last_robot_status = "IDLE"
         self.last_status_message = ""
-        self.setWindowTitle("ORBITAL SNAKE ROBOT MISSION CONTROL")
-        self.resize(1280, 800)
-        qss = (project_root / "src" / "ui" / "theme.qss").read_text(encoding="utf-8")
-        self.setStyleSheet(qss)
+
+        # 窗口基本属性
+        self.setWindowTitle("ORBITAL SNAKE ROBOT MISSION CONTROL · 任务总控台")
+        self.resize(1360, 840)
+
+        # 载入主题
+        qss_path = self.project_root / "src" / "ui" / "theme.qss"
+        if qss_path.exists():
+            self.setStyleSheet(qss_path.read_text(encoding="utf-8"))
+
         self._build_ui()
-        self.worker = VisionWorker(camera, detector_mode, yolo_model, yolo_conf, project_root)
+
+        # 启动视觉感知线程
+        self.worker = VisionWorker(camera, detector_mode, yolo_model, yolo_conf, self.project_root)
         self.worker.frameReady.connect(self.on_frame)
-        self.worker.error.connect(self.log.log)
-        self.worker.info.connect(self.log.log)
+        self.worker.error.connect(lambda msg: self.log.log(f"[ERROR] {msg}"))
+        self.worker.info.connect(lambda msg: self.log.log(f"[INFO] {msg}"))
         self.worker.start()
-        self.status.set_state(f"Camera: ONLINE | Vision: RUNNING | Bridge: {bridge_status} | Robot: IDLE | E-STOP: SAFE")
-        self.log.log("Vision pipeline started")
-        self.poll_timer = QTimer(self)
-        self.poll_timer.timeout.connect(self.poll_status)
-        self.poll_timer.start(600)
+
+        # 状态轮询定时器
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.poll_status)
+        self.timer.start(600)
+
+        self.log.log("Mission Control HMI initialized successfully.")
 
     def _build_ui(self) -> None:
-        root = QWidget()
-        main = QVBoxLayout(root)
-        main.setContentsMargins(8, 8, 8, 8)
-        main.setSpacing(8)
+        central = QWidget()
+        self.setCentralWidget(central)
+        main_layout = QVBoxLayout(central)
+        main_layout.setContentsMargins(4, 4, 4, 4)
+        main_layout.setSpacing(4)
 
-        self.status = MissionStatusBar()
-        main.addWidget(self.status)
+        # 1. 顶部航天总控 Header
+        self.header = MissionStatusBar(self)
+        main_layout.addWidget(self.header)
 
-        main_splitter = QSplitter(Qt.Vertical)
-        content_splitter = QSplitter(Qt.Horizontal)
+        # 2. 中间：左侧窄导航栏 + 中央多页面 StackedWidget
+        center_row = QHBoxLayout()
+        center_row.setContentsMargins(0, 0, 0, 0)
+        center_row.setSpacing(4)
 
-        self.task_sidebar = QWidget()
-        task_sidebar_layout = QVBoxLayout(self.task_sidebar)
-        task_sidebar_layout.setContentsMargins(0, 0, 0, 0)
-        task_sidebar_layout.setSpacing(6)
-        self.task_sidebar_btn = QPushButton(">")
-        self.task_sidebar_btn.setObjectName("sidebarToggleButton")
-        self.task_sidebar_btn.setToolTip("展开任务列表")
-        self.task_sidebar_btn.setMinimumWidth(30)
-        self.task_sidebar_btn.setMaximumWidth(34)
-        self.task_list = TaskListWidget()
-        self.task_list.clear()
-        self.task_list_group = wrap_group("TASK LIST", self.task_list)
-        self.task_list_group.setVisible(False)
-        task_sidebar_layout.addWidget(self.task_sidebar_btn, 0, Qt.AlignTop)
-        task_sidebar_layout.addWidget(self.task_list_group, 1)
-        self.task_sidebar.setMinimumWidth(34)
-        self.task_sidebar.setMaximumWidth(34)
+        self.navigation = NavigationWidget()
+        center_row.addWidget(self.navigation)
 
-        left_splitter = QSplitter(Qt.Vertical)
-        self.camera_view = CameraViewWidget()
-        self.map = MissionMapWidget()
-        camera_group = wrap_group("CAMERA VIEW", self.camera_view)
-        map_group = wrap_group("MISSION MAP", self.map)
-        camera_group.setMinimumHeight(280)
-        map_group.setMinimumHeight(140)
-        left_splitter.addWidget(camera_group)
-        left_splitter.addWidget(map_group)
-        left_splitter.setStretchFactor(0, 3)
-        left_splitter.setStretchFactor(1, 1)
-        left_splitter.setChildrenCollapsible(False)
+        self.stack = QStackedWidget()
 
-        right_splitter = QSplitter(Qt.Vertical)
-        self.selected_target_details = QPlainTextEdit()
-        self.selected_target_details.setReadOnly(True)
-        self.selected_target_details.setPlaceholderText("请选择一个目标")
-        self.selected_target_details.setPlainText("请选择一个目标")
-        self.command_panel = TaskCommandPanel()
-        selected_group = wrap_group("SELECTED TARGET 6DoF", self.selected_target_details)
-        command_group = wrap_group("COMMAND PANEL", self.command_panel)
-        selected_group.setMinimumHeight(300)
-        command_group.setMinimumHeight(230)
-        right_splitter.addWidget(selected_group)
-        right_splitter.addWidget(command_group)
-        right_splitter.setStretchFactor(0, 3)
-        right_splitter.setStretchFactor(1, 2)
-        right_splitter.setChildrenCollapsible(False)
-        right_splitter.setMinimumHeight(560)
+        # 共享日志组件
+        self.log = LogConsoleWidget()
 
-        right_scroll = QScrollArea()
-        right_scroll.setObjectName("rightPanelScroll")
-        right_scroll.setWidgetResizable(True)
-        right_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
-        right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        right_scroll.setWidget(right_splitter)
+        # Page 0: 【MISSION】核心任务总览
+        self.page_mission = MissionPage(self.state_machine, self)
+        self.page_mission.stepTriggerRequested.connect(self.on_mission_step_trigger)
+        self.page_mission.stepChoiceRequested.connect(self.on_mission_step_choice)
+        self.page_mission.resetRequested.connect(self.on_mission_reset)
+        self.page_mission.camera_view.targetClicked.connect(self.select_by_pixel)
+        self.stack.addWidget(self.page_mission)
 
-        content_splitter.addWidget(self.task_sidebar)
-        content_splitter.addWidget(left_splitter)
-        content_splitter.addWidget(right_scroll)
-        content_splitter.setStretchFactor(0, 0)
-        content_splitter.setStretchFactor(1, 3)
-        content_splitter.setStretchFactor(2, 2)
-        content_splitter.setChildrenCollapsible(False)
-        self.content_splitter = content_splitter
+        # Page 1: 【VISION】视觉感知
+        self.page_vision = VisionPage(self)
+        self.page_vision.targetSelected.connect(self.select_target)
+        self.page_vision.camera_view.targetClicked.connect(self.select_by_pixel)
+        self.stack.addWidget(self.page_vision)
 
-        self.log = LogConsole()
-        log_group = wrap_group("MISSION LOG", self.log)
-        log_group.setMinimumHeight(120)
-        main_splitter.addWidget(content_splitter)
-        main_splitter.addWidget(log_group)
-        main_splitter.setStretchFactor(0, 5)
-        main_splitter.setStretchFactor(1, 1)
-        main_splitter.setChildrenCollapsible(False)
-        main.addWidget(main_splitter, 1)
+        # Page 2: 【TASK】任务作业
+        self.page_task = TaskPage(self)
+        self.page_task.generateRequested.connect(self.generate_command)
+        self.page_task.publishRequested.connect(self.publish_command)
+        self.page_task.estopRequested.connect(self.emergency_stop)
+        self.page_task.cancelRequested.connect(self.cancel_task)
+        self.page_task.mission_map.coordinateSelected.connect(self.on_map_coordinate_selected)
+        self.stack.addWidget(self.page_task)
 
-        self.setCentralWidget(root)
-        self.camera_view.targetClicked.connect(self.select_by_pixel)
-        self.map.coordinateSelected.connect(self.on_map_coordinate_selected)
-        self.command_panel.generateRequested.connect(self.generate_command)
-        self.command_panel.publishRequested.connect(self.publish_command)
-        self.command_panel.estopRequested.connect(self.emergency_stop)
-        self.command_panel.cancelRequested.connect(self.cancel_task)
-        self.task_sidebar_btn.clicked.connect(self.toggle_task_list)
+        # Page 3: 【CONTROL】运动控制
+        self.page_control = ControlPage(self)
+        self.stack.addWidget(self.page_control)
 
-    def on_map_coordinate_selected(self, x: float, y: float) -> None:
-        self.command_panel.set_target_coordinate(x, y)
-        self.log.log(f"[MAP] Target coordinate selected: X={x:+.3f}m, Y={y:+.3f}m")
+        # Page 4: 【SYSTEM】系统监控
+        self.page_system = SystemPage(self.log, self)
+        self.stack.addWidget(self.page_system)
 
+        center_row.addWidget(self.stack, stretch=1)
+        main_layout.addLayout(center_row, stretch=1)
+
+        # 导航与急停信号绑定
+        self.navigation.pageChanged.connect(self.stack.setCurrentIndex)
+        self.navigation.estopTriggered.connect(self.emergency_stop)
+
+    # ---------------- 视觉感知与目标选择 ----------------
     def on_frame(self, image, objects) -> None:
         self.objects = list(objects)
-        self.vision_state_publisher.publish(self.objects, self.selected_id)
         self.current_frame = image.copy()
+
+        # 在画面上绘制选框与准星
         VisionPipeline.redraw_selection(image, self.objects, self.selected_id)
-        self.camera_view.set_frame_size(image.shape[1], image.shape[0])
-        self.camera_view.setPixmap(cv_bgr_to_qpixmap(image))
-        self.map.update_map(self.objects, self.selected_id)
+        pix = cv_bgr_to_qpixmap(image)
+
+        # 同步刷新 MissionPage 与 VisionPage 相机
+        self.page_mission.camera_view.set_frame_size(image.shape[1], image.shape[0])
+        self.page_mission.camera_view.setPixmap(pix)
+
+        self.page_vision.camera_view.set_frame_size(image.shape[1], image.shape[0])
+        self.page_vision.camera_view.setPixmap(pix)
+        self.page_vision.target_table.update_targets(self.objects, self.selected_id)
+
+        # 同步刷新俯视地图
+        self.page_task.mission_map.update_map(self.objects, self.selected_id)
+
+        # 发布最新视觉数据供控制模块读取
+        try:
+            self.vision_state_publisher.publish(self.objects, self.selected_id)
+        except Exception as exc:
+            pass
+
+        # 遥测数据同步至状态中心
         current = self._selected_obj()
         if self.selected_id and current:
             self.selected_target_last_seen_at = current.timestamp
-            self._refresh_selected_target_details(current, realtime=True)
-        elif self.selected_id:
-            self.log.log(f"Target lost: {self.selected_id}")
+            self._sync_vision_to_store(current)
         elif not self.objects:
-            self.selected_target_details.setPlainText("SEARCH\n目标丢失，正在搜索")
+            self.store.update_vision(
+                detector_status="SEARCH",
+                selected_target_id=None,
+                target_class=None,
+                depth_m=None,
+                pose_available=False,
+            )
+
+    def _sync_vision_to_store(self, obj) -> None:
+        pose = getattr(obj, "pose_camera", None)
+        pos = getattr(pose, "position", None) if pose else None
+        euler = getattr(pose, "orientation_euler", None) if pose else None
+        quality = getattr(obj, "quality", {}) or {}
+
+        self.store.update_vision(
+            selected_target_id=obj.target_id,
+            target_class=obj.class_name,
+            detector_status=obj.status,
+            confidence=obj.confidence,
+            depth_m=obj.depth_m,
+            pose_available=bool(obj.status == "POSE_6DOF"),
+            pos_x=getattr(pos, "x", 0.0) if pos else 0.0,
+            pos_y=getattr(pos, "y", 0.0) if pos else 0.0,
+            pos_z=getattr(pos, "z", 0.0) if pos else 0.0,
+            roll=getattr(euler, "roll", 0.0) if euler else 0.0,
+            pitch=getattr(euler, "pitch", 0.0) if euler else 0.0,
+            yaw=getattr(euler, "yaw", 0.0) if euler else 0.0,
+            valid_dots=quality.get("num_dots", 0),
+        )
 
     def select_target(self, target_id: str) -> None:
         self.selected_id = target_id
@@ -232,17 +272,89 @@ class MainWindow(QMainWindow):
             self.selected_target_snapshot = copy.deepcopy(obj)
             self.selected_target_locked_at = time.time()
             self.selected_target_last_seen_at = obj.timestamp
-            self._refresh_selected_target_details(obj, realtime=True)
-            self.log.log(f"Target locked: {obj.target_id}")
-        self.map.update_map(self.objects, self.selected_id)
+            self._sync_vision_to_store(obj)
+            self.log.log(f"[VISION] Target locked: {obj.target_id} ({obj.class_name})")
+
+        self.page_task.mission_map.update_map(self.objects, self.selected_id)
 
     def select_by_pixel(self, x: int, y: int) -> None:
         for obj in self.objects:
             x1, y1, x2, y2 = obj.bbox_xyxy
             if x1 <= x <= x2 and y1 <= y <= y2:
                 self.select_target(obj.target_id)
+                # 联动状态机：若当前等待目标点选，则直接前进
+                if self.state_machine.current_node_id in ("VISION_CHECK_1", "VISION_CHECK_2", "TARGET_SELECT_PICK"):
+                    self.state_machine.jump_to("TARGET_SELECT_PICK")
                 break
 
+    def on_map_coordinate_selected(self, x: float, y: float) -> None:
+        self.page_task.command_panel.set_target_coordinate(x, y)
+        self.log.log(f"[MAP] Target coordinate selected: X={x:+.3f}m, Y={y:+.3f}m")
+
+    # ---------------- 任务流程状态机联动 ----------------
+    def on_mission_step_trigger(self) -> None:
+        cur_node = self.state_machine.current_node
+        nid = cur_node.node_id
+
+        if nid == "ROBOT_START":
+            self.log.log("[MISSION] Operator starting robot (Homing/Reset)...")
+            self.generate_command("reset", {})
+            self.publish_command()
+            self.state_machine.advance()
+
+        elif nid == "COARSE_MAP_SELECT":
+            # 切换到 TaskPage 让操作员在 Map 上点选
+            self.stack.setCurrentIndex(2)
+            self.navigation.set_current_page(2)
+            self.log.log("[MISSION] Please click waypoint on Map in TASK page, then generate & publish move_to.")
+
+        elif nid == "TARGET_SELECT_PICK":
+            if not self.selected_id:
+                self.log.log("[MISSION] Warning: No target locked! Please select target on Camera image first.")
+                return
+            self.log.log(f"[MISSION] Publishing move_for_pick for target: {self.selected_id}")
+            self.generate_command("move_for_pick", {})
+            self.publish_command()
+            self.state_machine.advance()
+
+        elif nid == "OPERATOR_PICK_CMD":
+            self.log.log("[MISSION] Operator triggering pick command...")
+            self.generate_command("pick", {})
+            self.publish_command()
+            self.state_machine.advance()
+
+        elif nid == "OPERATOR_PLACE_TASK":
+            self.log.log("[MISSION] Publishing move_for_place...")
+            self.generate_command("move_for_place", {"destination": "Assembly_Port_A"})
+            self.publish_command()
+            self.state_machine.advance()
+
+        elif nid == "OPERATOR_PLACE_CMD":
+            self.log.log("[MISSION] Operator triggering place command...")
+            self.generate_command("place", {})
+            self.publish_command()
+            self.state_machine.advance()
+
+        else:
+            # 常规推进
+            next_node = self.state_machine.advance()
+            self.log.log(f"[MISSION] Advanced to stage: [{next_node.index:02d}] {next_node.title}")
+
+    def on_mission_step_choice(self, choice: bool) -> None:
+        next_node = self.state_machine.advance(decision_choice=choice)
+        choice_text = "YES / 确认" if choice else "NO / 否"
+        self.log.log(f"[MISSION] Branch chosen: {choice_text} -> [{next_node.index:02d}] {next_node.title}")
+
+        if next_node.node_id == "COARSE_MAP_SELECT":
+            # 引导跳转到 TASK 页面
+            self.stack.setCurrentIndex(2)
+            self.navigation.set_current_page(2)
+
+    def on_mission_reset(self) -> None:
+        self.state_machine.reset()
+        self.log.log("[MISSION] Workflow reset to start.")
+
+    # ---------------- 命令生成与发布 ----------------
     def generate_command(self, command_type: str, params: dict) -> None:
         obj = self._get_command_target()
         destination = params.get("destination")
@@ -253,98 +365,104 @@ class MainWindow(QMainWindow):
             destination_name=destination,
             estop_active=self.estop_active,
             robot_busy=self.robot_busy,
-            locked_at=self.selected_target_last_seen_at,
+            locked_at=self.selected_target_locked_at,
         )
-        if not result.ok:
-            self.log.log(f"Pre-check failed: {result.reason}")
-            self.pending_command = None
-            self._refresh_status_bar()
-            return
-        if obj and obj.status not in ("AVAILABLE", "LOCKED", "BEARING_ONLY", "PARTIAL_DEPTH", "POSE_6DOF"):
-            self.log.log(f"Pre-check warning: target status is {obj.status}; command saved for test only")
-        self.pending_command = build_task_command(
+        report = result.to_report()
+
+        cmd = build_task_command(
             command_type,
             params=params,
             selected_target=obj,
             destination_name=destination,
             estop_active=self.estop_active,
             robot_busy=self.robot_busy,
-            validation_report=result.to_report(),
+            validation_report=report,
             locked_at=self.selected_target_locked_at,
-            execution_mode=result.execution_mode,
         )
-        self.pending_target_pixmap = self._capture_target_pixmap(obj)
-        self.task_list.add_command(
-            self.pending_command,
-            target_snapshot=self.pending_target_pixmap,
-            initial_status="GENERATED",
-        )
-        self.log.log(
-            f"Command generated: {self.pending_command.command_id} {command_type} "
-            f"params={params} mode={result.execution_mode}"
-        )
-        self._refresh_status_bar()
+        self.pending_command = cmd
+
+        # 更新 TaskPage 预览
+        self.page_task.command_panel.set_preview(cmd.to_json(), report)
+        self.log.log(f"[COMMAND] Generated {command_type}: {report['validation_message']}")
 
     def publish_command(self) -> None:
-        if self.pending_command is None:
-            self.log.log("No pending command. Generate a task first.")
+        if not self.pending_command:
+            self.log.log("[COMMAND] No pending command to publish.")
             return
-        path = self.bridge.publish_command(self.pending_command)
-        published_command = self.pending_command
-        self.active_command_id = self.pending_command.command_id
-        self.robot_busy = self.pending_command.command_type not in ("emergency_stop",)
-        self.last_robot_status = "COMMAND_SENT"
-        if published_command.command_id not in self.task_list.records:
-            self.task_list.add_command(published_command, str(path), self.pending_target_pixmap, "PUBLISHED")
-        else:
-            self.task_list.mark_published(published_command.command_id, str(path))
-        self.pending_command = None
-        self.pending_target_pixmap = None
-        self._refresh_status_bar()
-        self.log.log(f"Command published to {path}")
+
+        cmd = self.pending_command
+        self.active_command_id = cmd.command_id
+        path = self.bridge.publish_command(cmd)
+
+        self.store.update_command(
+            command_id=cmd.command_id,
+            command_type=cmd.command_type,
+            control_status="DISPATCHED",
+            progress=0.0,
+            message="命令已发送至 outbox",
+        )
+
+        self.page_task.task_list.add_task(cmd, None)
+        self.log.log(f"[COMMAND] Published {cmd.command_id} to {path.name}")
 
     def emergency_stop(self) -> None:
         self.estop_active = True
         cmd = build_estop_command()
-        path = self.bridge.publish_command(cmd)
+        self.bridge.publish_command(cmd)
         self.active_command_id = cmd.command_id
-        self.robot_busy = False
-        self.last_robot_status = "ESTOP"
-        self.task_list.add_command(cmd, str(path), initial_status="PUBLISHED")
-        self._refresh_status_bar()
-        self.log.log(f"E-STOP command published to {path}")
+
+        self.store.update_health(estop_active=True)
+        self.store.update_command(
+            command_id=cmd.command_id,
+            command_type="emergency_stop",
+            control_status="ESTOP_TRIGGERED",
+            progress=0.0,
+            message="E-STOP 触发！",
+        )
+        self.log.log("[SAFETY] EMERGENCY STOP TRIGGERED!")
 
     def cancel_task(self) -> None:
-        result = validate_command(
-            "cancel_task",
-            params={},
-            target=None,
-            destination_name=None,
-            estop_active=False,
-            robot_busy=self.robot_busy,
-        )
-        cmd = build_task_command(
-            "cancel_task",
-            params={},
-            selected_target=None,
-            destination_name=None,
-            estop_active=False,
-            robot_busy=self.robot_busy,
-            validation_report=result.to_report(),
-        )
-        path = self.bridge.publish_command(cmd)
-        self.active_command_id = cmd.command_id
-        self.robot_busy = True
-        self.last_robot_status = "CANCELING"
-        self.task_list.add_command(cmd, str(path), initial_status="PUBLISHED")
-        self._refresh_status_bar()
-        self.log.log(f"Cancel command published to {path}")
+        if self.active_command_id:
+            cmd = build_task_command("cancel_task", {}, estop_active=self.estop_active)
+            self.bridge.publish_command(cmd)
+            self.log.log(f"[COMMAND] Sent cancel request for {self.active_command_id}")
 
+    # ---------------- 状态轮询 ----------------
     def poll_status(self) -> None:
-        for status in self.bridge.poll_status():
-            self.log.log(f"Task {status.command_id}: {status.status} {status.progress:.0%} - {status.message}")
-            self.task_list.add_status(status)
-            self._apply_task_status(status)
+        status = self.bridge.poll_status()
+        if not status:
+            return
+
+        cid = status.command_id
+        st = status.status
+        prog = status.progress
+        msg = status.message
+
+        self.robot_busy = st in ("ACCEPTED", "PLANNING", "EXECUTING")
+        self.last_robot_status = st
+
+        self.store.update_command(
+            command_id=cid,
+            command_type=status.current_step or "--",
+            control_status=st,
+            progress=prog,
+            message=msg,
+        )
+        self.store.update_health(robot_busy=self.robot_busy)
+
+        # 机械臂关节与状态遥测模拟或回显
+        rob_state = getattr(status, "robot_state", None) or {}
+        joints = rob_state.get("joint_positions")
+        if joints and isinstance(joints, list) and len(joints) >= 6:
+            self.store.update_robot(joint_angles_deg=joints[:6])
+
+        self.page_task.task_list.update_status(status)
+
+        # 若处于执行阶段且完成，可自动联动状态机前进
+        if st == "COMPLETED" and cid == self.active_command_id:
+            cur = self.state_machine.current_node_id
+            if cur in ("ROBOT_START", "COARSE_MOVING", "TARGET_SELECT_PICK", "ROBOT_PICKING", "OPERATOR_PLACE_TASK", "ROBOT_PLACING"):
+                self.state_machine.advance()
 
     def _selected_obj(self):
         for obj in self.objects:
@@ -353,180 +471,15 @@ class MainWindow(QMainWindow):
         return None
 
     def _get_command_target(self):
-        return self._selected_obj() or self.selected_target_snapshot
-
-    def _refresh_selected_target_details(self, obj, realtime: bool = False) -> None:
-        pose = obj.pose_camera
-        base = obj.pose_base
-        camera_orientation_available = self._orientation_available(obj, pose)
-        base_orientation_available = base is not None and self._orientation_available(obj, base)
-        source_text = "current frame / realtime" if realtime else "locked snapshot"
-        quality = getattr(obj, "quality", None) or {}
-        bearing = getattr(obj, "bearing", None) or quality.get("bearing") or quality.get("last_seen_bearing")
-        pose_available = bool(quality.get("pose_available", obj.status == "POSE_6DOF"))
-        lines = [
-            "Selected Target",
-            f"ID: {obj.target_id}",
-            f"Class: {obj.class_name}",
-            f"Display Name: {obj.display_name}",
-            f"Detection Mode: {obj.detection_mode}",
-            f"Pose Source: {source_text}",
-            f"Marker ID: {obj.marker_id if obj.marker_id is not None else '--'}",
-            f"Status: {obj.status}",
-            f"State Hint: {self._marker_state_text(obj.status)}",
-            f"Timestamp: {obj.timestamp:.3f}",
-            "",
-            "Detection Quality",
-            f"Confidence: {obj.confidence:.3f}",
-            f"Stability Score: {obj.stability_score:.3f}",
-            f"Depth: {obj.depth_m:.3f} m" if obj.depth_m is not None else "Depth: N/A",
-            f"BBox xyxy: {obj.bbox_xyxy}",
-            f"Center Pixel: {obj.center_pixel}",
-            "",
-            "Camera Frame 6DoF",
-            f"Frame: {pose.frame_id}",
-            f"x: {pose.position.x:.4f} m" if pose_available else "x: N/A",
-            f"y: {pose.position.y:.4f} m" if pose_available else "y: N/A",
-            f"z: {pose.position.z:.4f} m" if pose_available else "z: N/A",
-            f"roll: {pose.orientation_euler.roll:.4f} rad" if camera_orientation_available else "roll: N/A",
-            f"pitch: {pose.orientation_euler.pitch:.4f} rad" if camera_orientation_available else "pitch: N/A",
-            f"yaw: {pose.orientation_euler.yaw:.4f} rad" if camera_orientation_available else "yaw: N/A",
-            (
-                "Orientation Source: solved from marker template pose"
-                if camera_orientation_available
-                else "Orientation Source: unavailable for depth-only / YOLO bbox detection"
-            ),
-            "",
-            "Base Frame 6DoF",
-        ]
-        if quality:
-            insert_at = lines.index("Camera Frame 6DoF") - 1
-            quality_lines = [
-                f"Marker Dots: {quality.get('valid_depth_points', '--')}/{quality.get('num_dots', '--')}",
-                f"Match Error: {quality.get('match_error_m', 0.0):.4f} m" if quality.get("match_error_m") is not None else "Match Error: N/A",
-                f"Plane RMSE: {quality.get('plane_rmse_m', 0.0):.4f} m" if quality.get("plane_rmse_m") is not None else "Plane RMSE: N/A",
-                f"Pose RMSE: {quality.get('pose_rmse_m', 0.0):.4f} m" if quality.get("pose_rmse_m") is not None else "Pose RMSE: N/A",
-                f"Pose Method: {quality.get('pose_method', '--')}",
-            ]
-            lines[insert_at:insert_at] = quality_lines
-        if bearing:
-            insert_at = lines.index("Camera Frame 6DoF") - 1
-            lines[insert_at:insert_at] = [
-                "",
-                "Bearing",
-                f"Pixel Center: {[round(v, 2) for v in bearing.get('pixel_center', [])]}",
-                f"Pixel Error: {[round(v, 2) for v in bearing.get('pixel_error', [])]}",
-                f"Ray Camera: {[round(v, 4) for v in bearing.get('ray_camera', [])]}",
-            ]
-        if base:
-            lines.extend(
-                [
-                    f"Frame: {base.frame_id}",
-                    f"x: {base.position.x:.4f} m",
-                    f"y: {base.position.y:.4f} m",
-                    f"z: {base.position.z:.4f} m",
-                    f"roll: {base.orientation_euler.roll:.4f} rad" if base_orientation_available else "roll: N/A",
-                    f"pitch: {base.orientation_euler.pitch:.4f} rad" if base_orientation_available else "pitch: N/A",
-                    f"yaw: {base.orientation_euler.yaw:.4f} rad" if base_orientation_available else "yaw: N/A",
-                ]
-            )
-        else:
-            lines.append("Not available / waiting for calibration")
-        if self.selected_target_locked_at:
-            lines.extend(["", f"Locked At: {self.selected_target_locked_at:.3f}"])
-        if self.selected_target_last_seen_at:
-            lines.append(f"Last Seen At: {self.selected_target_last_seen_at:.3f}")
-        self.selected_target_details.setPlainText("\n".join(lines))
-
-    def _orientation_available(self, obj, pose) -> bool:
-        if obj.detection_mode in ("marker", "yolo_marker"):
-            return obj.status == "POSE_6DOF"
-        if obj.detection_mode in ("aruco", "aruco_solvepnp"):
-            return True
-        euler = pose.orientation_euler
-        return any(abs(value) > 1e-6 for value in (euler.roll, euler.pitch, euler.yaw))
-
-    def _marker_state_text(self, status: str) -> str:
-        return {
-            "SEARCH": "目标丢失，正在搜索",
-            "BEARING_ONLY": "方位锁定，正在靠近",
-            "APPROACH": "方位锁定，正在靠近",
-            "PARTIAL_DEPTH": "部分深度有效",
-            "POSE_6DOF": "6DoF 已锁定，可执行",
-            "LOST": "目标丢失，正在搜索",
-        }.get(status, status)
-
-    def _capture_target_pixmap(self, obj):
-        if obj is None or self.current_frame is None:
-            return None
-        x1, y1, x2, y2 = obj.bbox_xyxy
-        height, width = self.current_frame.shape[:2]
-        pad = 12
-        x1 = max(0, int(x1) - pad)
-        y1 = max(0, int(y1) - pad)
-        x2 = min(width, int(x2) + pad)
-        y2 = min(height, int(y2) + pad)
-        if x2 <= x1 or y2 <= y1:
-            return None
-        crop = self.current_frame[y1:y2, x1:x2].copy()
-        return cv_bgr_to_qpixmap(crop)
-
-    def _apply_task_status(self, status) -> None:
-        terminal = {"COMPLETED", "FAILED", "CANCELED", "REJECTED"}
-        if status.status == "ESTOP_TRIGGERED":
-            self.estop_active = True
-            self.robot_busy = False
-            self.active_command_id = status.command_id
-            self.last_robot_status = "ESTOP"
-        elif self.active_command_id and status.command_id != self.active_command_id:
-            self.last_status_message = f"Historical status: {status.status}"
-            return
-        elif status.status in terminal:
-            self.robot_busy = False
-            self.active_command_id = None
-            self.last_robot_status = status.status
-        else:
-            self.robot_busy = True
-            self.active_command_id = status.command_id
-            self.last_robot_status = status.status
-        self.last_status_message = status.message
-        self._refresh_status_bar(status)
-
-    def _refresh_status_bar(self, status=None) -> None:
-        progress_part = f" {status.progress:.0%}" if status else ""
-        task_part = f"Task: {self.active_command_id}" if self.active_command_id else "Task: --"
-        self.status.set_state(
-            f"Camera: ONLINE | Vision: RUNNING | Bridge: {self.bridge_status} | "
-            f"Robot: {self.last_robot_status}{progress_part} | {task_part} | "
-            f"E-STOP: {'TRIGGERED' if self.estop_active else 'SAFE'}",
-            self.estop_active,
-        )
-
-    def toggle_task_list(self) -> None:
-        self._show_task_list(not self.task_list_visible)
-
-    def _show_task_list(self, visible: bool) -> None:
-        self.task_list_visible = visible
-        self.task_list_group.setVisible(visible)
-        self.task_sidebar_btn.setText("<" if visible else ">")
-        self.task_sidebar_btn.setToolTip("收起任务列表" if visible else "展开任务列表")
-        if visible:
-            self.task_sidebar.setMinimumWidth(500)
-            self.task_sidebar.setMaximumWidth(16777215)
-            self.content_splitter.setSizes([560, 500, 420])
-        else:
-            self.task_sidebar.setMinimumWidth(34)
-            self.task_sidebar.setMaximumWidth(34)
-            self.content_splitter.setSizes([34, 740, 500])
+        obj = self._selected_obj()
+        if obj:
+            return obj
+        if self.selected_target_snapshot and self.selected_id == self.selected_target_snapshot.target_id:
+            return self.selected_target_snapshot
+        return None
 
     def closeEvent(self, event) -> None:
-        self.worker.stop()
-        self.worker.wait(1500)
-        super().closeEvent(event)
-
-
-def wrap_group(title: str, widget: QWidget) -> QGroupBox:
-    group = QGroupBox(title)
-    layout = QVBoxLayout(group)
-    layout.addWidget(widget)
-    return group
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.stop()
+            self.worker.wait(1000)
+        event.accept()

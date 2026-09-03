@@ -10,3 +10,6 @@ class LogConsole(QPlainTextEdit):
 
     def log(self, message: str) -> None:
         self.appendPlainText(f"[{ts()}] {message}")
+
+
+LogConsoleWidget = LogConsole
