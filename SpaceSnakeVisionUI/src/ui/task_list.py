@@ -138,6 +138,18 @@ class TaskListWidget(QWidget):
         if self._selected_command_id() == command_id:
             self._show_selected_details()
 
+    def add_task(
+        self,
+        command: TaskCommand,
+        target_snapshot: QPixmap | None = None,
+        publish_ref: str | None = None,
+        initial_status: str = "PENDING",
+    ) -> None:
+        self.add_command(command, publish_ref=publish_ref, target_snapshot=target_snapshot, initial_status=initial_status)
+
+    def update_status(self, status: TaskStatus) -> None:
+        self.add_status(status)
+
     def add_status(self, status: TaskStatus) -> None:
         command_id = status.command_id
         if command_id not in self.records:

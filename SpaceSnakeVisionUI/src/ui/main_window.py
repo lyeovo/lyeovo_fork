@@ -402,7 +402,7 @@ class MainWindow(QMainWindow):
             message="命令已发送至 outbox",
         )
 
-        self.page_task.task_list.add_task(cmd, None)
+        self.page_task.task_list.add_task(cmd, publish_ref=str(path.name))
         self.log.log(f"[COMMAND] Published {cmd.command_id} to {path.name}")
 
     def emergency_stop(self) -> None:
