@@ -1,367 +1,152 @@
-# D405 编码靶标视觉与 SpaceSnake UI
+# 空间蛇形机械臂任务总控台 (Mission Control HMI) 与 D405 靶标视觉系统
 
-本仓库用于 Intel RealSense D405 编码圆点靶标识别和机械臂视觉 UI 集成。当前系统把贴在目标物体上的编码靶标作为目标本体：远距离先用 YOLO 找到靶标大致方位，近距离再识别靶标上的白色圆点并输出 6DoF 位姿。
+本仓库面向在轨空间装配与超冗余蛇形机械臂作业场景，打造了一套**航天任务控制中心风格（Mission Control Style）的机器人任务总控人机交互系统（HMI）**，深度融合 Intel RealSense D405 编码靶标视觉测量流水线，形成“**感知—决策—规划—执行—反馈**”全链路闭环控制平台。
 
-项目包含两个主要模块：
+---
 
-```text
-D405+UI/
-  SpaceSnakeVisionUI/          # PySide6 UI、YOLO 靶标检测、任务发布接口
-  snake_vision_d405_target/    # D405 红外圆点检测、模板学习、靶标位姿估计
-```
-
-## 当前能力
-
-- 使用 D405 彩色图通过 YOLO 识别编码靶标整体区域。
-- 使用 D405 红外图在 YOLO 靶标区域内识别白色圆点。
-- 支持 `201`、`222`、`207` 三类编码靶标的模板映射。
-- 远距离不强制输出 6DoF，只输出目标方位 `bearing`。
-- 近距离在有效深度圆点数量足够时输出完整 6DoF。
-- UI 中显示靶标状态、目标框、板面四边形、方位和位姿。
-- 通过 file bridge 输出任务 JSON，便于后续接机械臂控制模块。
-
-## 两级识别逻辑
-
-系统不是一看到靶标就强行输出 6DoF，而是按状态机工作：
+## 一、系统架构与设计理念
 
 ```text
-SEARCH
-  没看到靶标
-
-BEARING_ONLY
-  YOLO 已看到靶标，但白点或深度不足，只输出方位
-
-PARTIAL_DEPTH
-  有部分白点深度有效，但不足以稳定估计 6DoF
-
-POSE_6DOF
-  至少 6 个白点深度有效，并且模板匹配稳定
-
-LOST
-  短时间丢失目标，保留 last_seen_bearing
+                      ┌──────────────────────────────────────────────┐
+                      │     ORBITAL SNAKE ROBOT MISSION CONTROL      │
+                      │             (PySide6 总控 HMI)               │
+                      └──────────────────────┬───────────────────────┘
+                                             │
+                                     SystemStateStore
+                                             │
+              ┌──────────────────────────────┼──────────────────────────────┐
+              ▼                              ▼                              ▼
+   ┌─────────────────────┐        ┌─────────────────────┐        ┌─────────────────────┐
+   │    VisionManager    │        │   MissionManager    │        │   ControlManager    │
+   │                     │        │                     │        │                     │
+   │ • D405 双目/深度采集 │        │ • 流程图状态机调度   │        │ • Outbox 命令发布   │
+   │ • YOLO 靶标粗识别   │        │ • 步骤决策与分支仲裁 │        │ • Inbox 状态轮询    │
+   │ • 白点 6DoF 模板匹配│        │ • 任务安全边界自检   │        │ • MATLAB/dSPACE 桥接│
+   └──────────┬──────────┘        └──────────┬──────────┘        └──────────┬──────────┘
+              │                              │                              │
+              ▼                              ▼                              ▼
+     latest_targets.json              TaskCommand JSON               TaskStatus JSON
+     (data/vision/)                   (data/outbox/)                 (data/inbox/)
+              │                              │                              │
+              └──────────────────────────────┼──────────────────────────────┘
+                                             ▼
+                                 ┌───────────────────────┐
+                                 │ MATLAB / dSPACE 运动端 │
+                                 │ (ArmSimApp / Planner) │
+                                 └───────────────────────┘
 ```
 
-UI 对应显示：
+### 1. 唯一交互总控台 (Single Source of HMI)
+- **前端 (PySide6)**：作为唯一的人机交互与任务控制入口，统领视觉感知、工作流调度、俯视地图操纵、关节遥测与系统监控。
+- **后台 (MATLAB / ArmSimApp)**：作为后端的运动学逆解求解器、动力学规划器与底层驱动引擎，通过标准 JSON 协议与总控通信，无需并列双开操作界面。
+
+### 2. 航天总控 5 大功能分页
+为解决电脑屏幕有限但信息高度集成的矛盾，采用“**顶部常驻状态 Header + 左侧紧凑导航栏 + 5 大独立功能页面**”：
+- **① 🚀 MISSION (任务总览 - 核心首屏)**：
+  - 基于《机械臂抓取操作系统流程图》的自绘程序化动态流程图（`WorkflowWidget`），当前执行节点具有电光青蓝发光边框与缓动呼吸动效；
+  - 实时相机导引画面与目标准星；
+  - 目标 6DoF 遥测卡片与机械臂末端状态卡片；
+  - 底部阶段操作条，提供“执行推进下一步”与分支条件（“是/否”）快速仲裁。
+- **② 👁 VISION (视觉感知专页)**：
+  - 大视野高帧率 D405 相机流；
+  - 视野多目标选择表格与状态机阶段指示；
+  - 目标 6DoF 详细位姿矩阵（X, Y, Z, R, P, Y）、红外白点质量指标（有效点数、重投影误差）。
+- **③ 🎯 TASK (任务作业专页)**：
+  - 俯视地图（`MissionMapWidget`）：支持直接在地图上单击任意位置快速拾取物理坐标，并高亮航点；
+  - 10 类任务指令表单（`move_to`, `move_along`, `move_for_pick`, `move_for_place`, `rotate`, `rotate_arm`, `facing_arm`, `pick`, `place`, `withdraw`, `reset`）；
+  - 可折叠历史任务清单抽屉。
+- **④ 🦾 CONTROL (运动控制专页)**：
+  - 吸收 `ArmSimApp.m` 精髓，自绘蛇形机械臂 2D 骨骼拓扑姿态；
+  - 6 关节角度实时监测矩阵与角位移柱状条；
+  - 规划器运行指标（求解耗时、末端跟踪误差、dSPACE 链路频率）。
+- **⑤ 🖥 SYSTEM (系统诊断专页)**：
+  - 全系统 9 大子模块（相机、YOLO、白点匹配、状态机、命令桥、规划器、dSPACE、关节执行器、夹爪）在线健康状态指示灯；
+  - 视觉帧率 (FPS) 与命令通信往返延时 (RTT)；
+  - 全流程统一时间戳审计控制台日志。
+
+---
+
+## 二、流程图状态机驱动 (MissionStateMachine)
+
+系统核心由任务级状态机驱动，严格对照 [`机械臂抓取操作系统流程图.svg`](file:///f:/Grade3/study/D405+UI/%E6%9C%BA%E6%A2%B0%E8%87%82%E6%8A%93%E5%8F%96%E6%93%8D%E4%BD%9C%E7%B3%BB%E7%BB%9F%E6%B5%81%E7%A8%8B%E5%9B%BE.svg) 的完整业务闭环：
 
 ```text
-BEARING_ONLY  -> 方位锁定，正在靠近
-PARTIAL_DEPTH -> 部分深度有效
-POSE_6DOF     -> 6DoF 已锁定，可执行
-LOST          -> 目标丢失，正在搜索
+流程开始
+   ↓
+启动机械臂 (发布 reset)
+   ↓
+相机视野中是否有目标物体？ (判断分支 1)
+   ├─ [否] → 俯视 Map 点选大致位置 → 发布 move_to (x, y) → 机械臂移到大致位置 → 二次检测视野
+   └─ [是]
+      ↓
+相机画面中点选目标物体 → 发布 move_for_pick (视觉伺服靠近)
+      ↓
+到达目标位置 (6DoF 对齐预备姿态)
+      ↓
+下达抓取命令 (发布 pick 动作链)
+      ↓
+机械臂抓取物体
+      ↓
+是否抓取成功？ (力控与接触传感器判断分支 2)
+   ├─ [否] → 返回重新下达抓取 (重试)
+   └─ [是]
+      ↓
+发布放置到终点任务命令 → 发布 move_for_place (装配工位寻位)
+      ↓
+机械臂携物体到达终点工位
+      ↓
+下达放置命令 (发布 place 释放脱钩)
+      ↓
+机械臂放置物体
+      ↓
+任务完成，进入下一个工件循环 (循环复位)
 ```
 
-## 运行环境
+---
 
-推荐在 Windows PowerShell 中运行。当前项目使用本地虚拟环境：
+## 三、视觉靶标检测与两级识别
 
-```powershell
-cd F:\Grade3\study\D405+UI\SpaceSnakeVisionUI
+针对空间对接靶标，系统支持 `201`、`222`、`207` 三类编码靶标（YOLOv11 模型已完成全类别训练，mAP50 达到 97.5%）：
 
-.\.venv\Scripts\python.exe run_ui.py --camera d405 --bridge file
+```text
+SEARCH        : 视野内未检测到目标靶标
+BEARING_ONLY  : 远距离，YOLO 检测到靶标外形，输出方位射线 (bearing ray)
+PARTIAL_DEPTH : 中近距离，检测到部分红外圆点，深度逐步恢复
+POSE_6DOF     : 近距离，有效白点 >= 6，结合模板匹配算法输出稳定 6 自由度位姿
+LOST          : 瞬时遮挡或视野丢失，保留短时记忆
 ```
 
-如果需要重新创建环境：
+---
+
+## 四、接口规范与数据通信协议
+
+UI 与控制端（MATLAB/dSPACE）采用标准分层文件桥通信：
+
+- **任务指令下发**：`data/outbox/CMD-YYYYMMDD-NNNNN.json`
+- **控制状态反馈**：`data/inbox/{command_id}_status.json`
+- **实时视觉闭环流**：`data/vision/latest_targets.json`
+
+> 详细字段定义、物理单位与参数范围请查阅：  
+> 📄 [TASK_COMMAND_INTERFACE.md](file:///f:/Grade3/study/D405+UI/SpaceSnakeVisionUI/docs/TASK_COMMAND_INTERFACE.md)
+
+---
+
+## 五、快速启动与操作指南
+
+推荐在 Windows PowerShell 中运行：
 
 ```powershell
-cd F:\Grade3\study\D405+UI\SpaceSnakeVisionUI
+cd SpaceSnakeVisionUI
 
-python -m venv .venv
-.\.venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-`snake_vision_d405_target` 也有自己的 `requirements.txt`，用于单独调试 D405 双目、圆点检测和模板学习。
-
-## 启动 UI
-
-D405 实机 + 靶标 YOLO + 文件桥接：
-
-```powershell
-cd F:\Grade3\study\D405+UI\SpaceSnakeVisionUI
-
-.\.venv\Scripts\python.exe run_ui.py --camera d405 --bridge file
-```
-
-等价的显式写法：
-
-```powershell
-.\.venv\Scripts\python.exe run_ui.py `
-  --camera d405 `
-  --bridge file `
-  --detector yolo_marker `
-  --yolo-model models\marker_targets_best.pt `
-  --yolo-conf 0.35
-```
-
-Mock 模式：
-
-```powershell
+# 1. 使用 Mock 模拟环境启动总控（无需连接相机硬件，便于演示测试）
 .\.venv\Scripts\python.exe run_ui.py --camera mock --bridge file --detector mock
-```
 
-## YOLO 靶标模型
-
-当前 UI 默认使用：
-
-```text
-SpaceSnakeVisionUI/models/marker_targets_best.pt
-```
-
-这个模型会识别编码靶标整体区域。远距离阶段使用 YOLO 框计算 bearing，近距离阶段在 YOLO 区域内继续做白点检测和 6DoF。
-
-### 采集 YOLO 数据
-
-以采集 `201` 靶标为例：
-
-```powershell
-cd F:\Grade3\study\D405+UI\SpaceSnakeVisionUI
-
-.\.venv\Scripts\python.exe scripts\collect_marker_yolo_dataset.py --class-id 201
-```
-
-操作方式：
-
-```text
-摄像头对准靶标
-看到红框正确框住靶标后按 s 保存
-按 q 或 ESC 退出
-```
-
-程序会自动保存图片和 YOLO 标注到：
-
-```text
-datasets/marker_targets/images/
-datasets/marker_targets/labels/
-```
-
-### 训练 YOLO
-
-```powershell
-.\.venv\Scripts\python.exe scripts\train_marker_yolo.py --epochs 80 --batch 8 --name marker_targets_v1
-```
-
-训练完成后模型通常在：
-
-```text
-runs/detect/marker_targets_v1/weights/best.pt
-```
-
-### 评估 YOLO
-
-```powershell
-.\.venv\Scripts\python.exe scripts\evaluate_marker_yolo.py `
-  --model runs\detect\marker_targets_v1\weights\best.pt `
-  --save-vis
-```
-
-主要看：
-
-```text
-precision >= 0.90
-recall    >= 0.90
-mean_iou  >= 0.75
-```
-
-评估通过后可复制为 UI 默认模型：
-
-```powershell
-copy runs\detect\marker_targets_v1\weights\best.pt models\marker_targets_best.pt
-```
-
-## 靶标模板学习
-
-如果新增编码靶标，需要先在 `snake_vision_d405_target` 中学习白点模板。学习时画面里尽量只放一个靶标，并保证 8 个白点清晰无遮挡。
-
-示例：
-
-```powershell
-cd F:\Grade3\study\D405+UI\snake_vision_d405_target
-
-.\.venv\Scripts\python.exe scripts\11_learn_target_template.py --target-id target_1
-```
-
-模板会写入：
-
-```text
-snake_vision_d405_target/config/target_database.yaml
-```
-
-UI 侧类别映射配置在：
-
-```text
-snake_vision_d405_target/config/runtime_config.yaml
-```
-
-关键配置：
-
-```yaml
-marker_yolo:
-  class_to_target_id:
-    "201": "target_1"
-    "222": "target_2"
-    "207": "target_3"
-```
-
-## 抗环境干扰设计
-
-为了避免周围环境影响 6DoF，当前 `yolo_marker` 检测器采用：
-
-```text
-YOLO 框
-  -> 黑色靶标板面四边形
-  -> 板面 mask
-  -> mask 内白点检测
-  -> 自适应阈值
-  -> 深度反投影
-  -> 模板匹配 / Kabsch 位姿估计
-```
-
-UI 中会显示橙色四边形，表示系统认为的靶标板面区域。这个四边形应尽量贴合黑色靶标板面。
-
-相关配置：
-
-```yaml
-marker_yolo:
-  roi_pad_px: 30
-  use_board_mask: true
-  board_mask_pad_px: 10
-  adaptive_dot_threshold: true
-  pose_hold_seconds: 0.35
-```
-
-调参建议：
-
-- 橙色四边形偏小：增大 `board_mask_pad_px`。
-- 白点数量忽多忽少：检查 `adaptive_dot_threshold` 和红外曝光。
-- `num_dots >= 6` 但 `valid_depth_points < 6`：说明白点看到了，但深度不稳定。
-- `valid_depth_points >= 6` 仍不是 `POSE_6DOF`：检查模板匹配误差和误检点。
-
-## 输出 JSON 与任务命令发布
-
-### 1. 实时视觉状态输出 (`latest_targets.json`)
-
-视觉模块输出结构核心字段如下：
-
-```json
-{
-  "target_id": "target_1",
-  "status": "BEARING_ONLY | PARTIAL_DEPTH | POSE_6DOF | LOST | SEARCH",
-  "frame_id": "camera_left",
-  "bearing": {
-    "pixel_center": [0, 0],
-    "pixel_error": [0, 0],
-    "ray_camera": [0, 0, 1]
-  },
-  "pose": {
-    "position": {"x": 0, "y": 0, "z": 0},
-    "orientation": {"qx": 0, "qy": 0, "qz": 0, "qw": 1}
-  },
-  "quality": {
-    "num_dots": 8,
-    "valid_depth_points": 8,
-    "confidence": 0.95
-  }
-}
-```
-
-当 `status != POSE_6DOF` 时，`pose` 允许为空，控制模块应使用 `bearing` 做靠近或搜索。
-
-### 2. 任务命令发布契约 (`CMD-*.json`)
-
-UI 支持生成并发布 10 种标准化任务指令至 `data/outbox/`：
-
-| 任务类型 | 描述 | 核心参数 `params` |
-| :--- | :--- | :--- |
-| `move_to` | 末端移动到指定物理坐标 (x, y) | `{"x": float, "y": float}`（**支持在下方 Mission Map 地图上点击快速取点**） |
-| `move_along` | 末端向 $\theta$ 方向移动 $d$ 米 | `{"theta_deg": float, "distance_m": float}` |
-| `move_for_pick` | 根据实时相对位置向物体移动 | 自动关联锁定目标位姿 |
-| `move_for_place` | 根据硬编码向放置位置移动 | `{"destination": "Assembly_Port_A"}` |
-| `rotate` | 末端固定位置旋转 $\alpha$ 角 | `{"alpha_deg": float}` |
-| `rotate_arm` | 第 $n$ 关节旋转 $\alpha$ 度 | `{"joint_index": int, "alpha_deg": float}` |
-| `facing_arm` | 第 $n$ 关节面向 $\theta$ 方向 | `{"joint_index": int, "theta_deg": float}` |
-| `pick` | 夹爪抓取动作链 | `{}` |
-| `place` | 夹爪放置动作链 | `{}` |
-| `withdraw` | 退回上一状态 | `{}` |
-| `reset` | 恢复初始位置 | `{}` |
-| `emergency_stop` | 最高优先级急停 | `{}` |
-
-任务发布 JSON 示例（Schema v2.0）：
-
-```json
-{
-  "schema_version": "2.0",
-  "command_id": "CMD-20260902-00001",
-  "timestamp": 1788320000.123,
-  "source": "SpaceSnakeVisionUI",
-  "command_type": "move_to",
-  "params": {
-    "x": 0.350,
-    "y": 0.200
-  },
-  "selected_target": null,
-  "safety": {
-    "validation_passed": true,
-    "validation_message": "validation passed",
-    "estop_active": false,
-    "execution_mode": "real_robot"
-  }
-}
-```
-
-## 目录说明
-
-```text
-SpaceSnakeVisionUI/
-  run_ui.py                         # UI 启动入口
-  src/camera/realsense_d405.py      # D405 color/IR/depth 采集
-  src/vision/yolo_marker_detector.py# YOLO + 板面 mask + 白点 6DoF
-  src/vision/pipeline.py            # 视觉流水线和画面叠加
-  scripts/collect_marker_yolo_dataset.py
-  scripts/train_marker_yolo.py
-  scripts/evaluate_marker_yolo.py
-  models/marker_targets_best.pt
-
-snake_vision_d405_target/
-  config/runtime_config.yaml
-  config/target_database.yaml
-  scripts/11_learn_target_template.py
-  src/target/
-  src/detection/
-  src/stereo/
-```
-
-## Git 忽略规则
-
-仓库不会提交以下内容：
-
-```text
-.venv/
-runs/
-采集图片和 YOLO 标签
-data/outbox、data/inbox、data/logs
-大型 zip 文件
-yolo11n.pt 基础权重
-```
-
-仓库保留 `models/marker_targets_best.pt`，这样克隆后 UI 可以直接加载当前靶标模型。
-
-## 常用命令
-
-```powershell
-# 启动 UI
-cd F:\Grade3\study\D405+UI\SpaceSnakeVisionUI
+# 2. 连接 RealSense D405 相机真机启动
 .\.venv\Scripts\python.exe run_ui.py --camera d405 --bridge file
 
-# 采集 201 数据
-.\.venv\Scripts\python.exe scripts\collect_marker_yolo_dataset.py --class-id 201
+# 3. 运行 Mock 控制模块（模拟控制端接收命令与汇报状态）
+.\.venv\Scripts\python.exe -m src.bridge.mock_control_server --mode file
 
-# 训练 YOLO
-.\.venv\Scripts\python.exe scripts\train_marker_yolo.py --epochs 80 --batch 8 --name marker_targets_v1
-
-# 评估 YOLO
-.\.venv\Scripts\python.exe scripts\evaluate_marker_yolo.py --model runs\detect\marker_targets_v1\weights\best.pt --save-vis
-
-# 学习靶标模板
-cd F:\Grade3\study\D405+UI\snake_vision_d405_target
-.\.venv\Scripts\python.exe scripts\11_learn_target_template.py --target-id target_1
+# 4. 执行全套自动化单元与集成测试（21 项全通过）
+.\.venv\Scripts\python.exe -m pytest tests/ --basetemp=./data/test_tmp
 ```
