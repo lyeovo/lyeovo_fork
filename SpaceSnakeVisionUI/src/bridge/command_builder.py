@@ -24,11 +24,9 @@ ZONE_POSES["Safe_Zone"].position.z = 0.30
 
 def build_task_command(
     command_type: str,
-    selected_target,
-    destination_name: Optional[str],
-    approach_distance_m: float,
-    speed_mode: str,
-    gripper_mode: str,
+    params: Optional[Dict[str, Any]] = None,
+    selected_target = None,
+    destination_name: Optional[str] = None,
     estop_active: bool = False,
     *,
     robot_busy: bool = False,
@@ -36,34 +34,35 @@ def build_task_command(
     locked_at: Optional[float] = None,
     execution_mode: str = "simulation_only",
 ) -> TaskCommand:
+    clean_params = dict(params or {})
     destination: Optional[Dict[str, Any]] = None
     if destination_name and destination_name in ZONE_POSES:
         destination = {"name": destination_name, "pose_base": ZONE_POSES[destination_name].to_dict()}
+    elif command_type == "move_for_place" and "destination" in clean_params:
+        destination = {"name": clean_params["destination"]}
+
     return TaskCommand(
-        schema_version="1.1",
+        schema_version="2.0",
         command_id=new_command_id(),
         timestamp=time.time(),
         source="SpaceSnakeVisionUI",
         command_type=command_type,
+        params=clean_params,
         selected_target=_target_summary(selected_target, locked_at) if selected_target else None,
         destination=destination,
-        motion_params={
-            "approach_distance_m": approach_distance_m,
-            "speed_mode": speed_mode,
-            "gripper_mode": gripper_mode,
-            "stop_if_target_lost": True,
-        },
+        motion_params=clean_params,
         safety=_safety_summary(estop_active, robot_busy, validation_report, execution_mode),
     )
 
 
 def build_estop_command() -> TaskCommand:
     return TaskCommand(
-        "1.1",
-        new_command_id("CMD-ESTOP"),
-        time.time(),
-        "SpaceSnakeVisionUI",
-        "emergency_stop",
+        schema_version="2.0",
+        command_id=new_command_id("CMD-ESTOP"),
+        timestamp=time.time(),
+        source="SpaceSnakeVisionUI",
+        command_type="emergency_stop",
+        params={},
         safety={
             "require_user_confirm": False,
             "allow_execute": True,

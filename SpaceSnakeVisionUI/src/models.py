@@ -119,6 +119,7 @@ class TaskCommand:
     timestamp: float
     source: str
     command_type: str
+    params: Dict[str, Any] = field(default_factory=dict)
     selected_target: Optional[Dict[str, Any]] = None
     destination: Optional[Dict[str, Any]] = None
     motion_params: Dict[str, Any] = field(default_factory=dict)
@@ -133,7 +134,8 @@ class TaskCommand:
 
     @classmethod
     def from_json(cls, raw: str) -> "TaskCommand":
-        return cls(**json.loads(raw))
+        data = json.loads(raw)
+        return cls(**data)
 
 
 @dataclass

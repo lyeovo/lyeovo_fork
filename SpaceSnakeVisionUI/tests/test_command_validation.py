@@ -26,37 +26,59 @@ def make_target(**overrides):
 
 
 def test_estop_blocks_regular_command():
-    result = validate_command("pick_and_place", make_target(), "Assembly_Port_A", 0.05, estop_active=True)
+    result = validate_command("move_to", {"x": 0.3, "y": 0.2}, estop_active=True)
     assert not result.ok
     assert "E-STOP" in result.reason
 
 
-def test_home_without_target_passes():
-    result = validate_command("home", None, "Safe_Zone", 0.05)
-    assert result.ok
+def test_move_to_validation():
+    # 有效坐标
+    res1 = validate_command("move_to", {"x": 0.35, "y": -0.10})
+    assert res1.ok
+
+    # 越界坐标
+    res2 = validate_command("move_to", {"x": 2.5, "y": 0.0})
+    assert not res2.ok
+    assert "exceeds" in res2.reason
+
+    # 缺少参数
+    res3 = validate_command("move_to", {})
+    assert not res3.ok
 
 
-def test_target_command_requires_target():
-    result = validate_command("pick_and_place", None, "Assembly_Port_A", 0.05)
-    assert not result.ok
-    assert result.reason == "no target selected"
+def test_move_along_validation():
+    # 正常
+    res1 = validate_command("move_along", {"theta_deg": 30.0, "distance_m": 0.15})
+    assert res1.ok
+
+    # 距离非法
+    res2 = validate_command("move_along", {"theta_deg": 30.0, "distance_m": -0.1})
+    assert not res2.ok
 
 
-def test_low_confidence_rejected():
-    result = validate_command("pick_target", make_target(confidence=0.2), "Assembly_Port_A", 0.05)
-    assert not result.ok
-    assert "confidence" in result.reason
+def test_rotate_arm_validation():
+    # 正常
+    res1 = validate_command("rotate_arm", {"joint_index": 2, "alpha_deg": 45.0})
+    assert res1.ok
+
+    # 关节编号越界
+    res2 = validate_command("rotate_arm", {"joint_index": 99, "alpha_deg": 45.0})
+    assert not res2.ok
 
 
-def test_pose_base_missing_allows_simulation_only():
-    result = validate_command("pick_target", make_target(pose_base=None), "Assembly_Port_A", 0.05)
-    assert result.ok
-    assert result.execution_mode == "simulation_only"
-    assert not result.allow_real_execute
+def test_move_for_pick_requires_target():
+    # 无 target 拒绝
+    res1 = validate_command("move_for_pick", {})
+    assert not res1.ok
+    assert "target" in res1.reason
+
+    # 有 target 通过
+    res2 = validate_command("move_for_pick", {}, target=make_target())
+    assert res2.ok
 
 
 def test_robot_busy_blocks_regular_but_allows_cancel():
-    blocked = validate_command("pick_target", make_target(), "Assembly_Port_A", 0.05, robot_busy=True)
-    cancel = validate_command("cancel_task", None, None, 0.05, robot_busy=True)
+    blocked = validate_command("move_to", {"x": 0.1, "y": 0.1}, robot_busy=True)
+    cancel = validate_command("cancel_task", {}, robot_busy=True)
     assert not blocked.ok
     assert cancel.ok

@@ -13,11 +13,7 @@ __pycache__/
 *.tmp
 *.bak
 
-SpaceSnakeVisionUI/data/outbox/
-SpaceSnakeVisionUI/data/inbox/
-SpaceSnakeVisionUI/data/logs/
-SpaceSnakeVisionUI/data/recordings/
-SpaceSnakeVisionUI/data/vision/
+SpaceSnakeVisionUI/data/
 snake_vision_d405_target/data/output/
 
 SpaceSnakeVisionUI/runs/

@@ -28,18 +28,21 @@ def run_file_mode(root: Path) -> None:
 
 
 def _steps_for(command: TaskCommand) -> list[tuple[str, str, float]]:
-    if command.command_type == "emergency_stop":
+    c_type = command.command_type
+    if c_type == "emergency_stop":
         return [("ESTOP_TRIGGERED", "ESTOP_TRIGGERED", 1.0)]
-    if command.command_type == "cancel_task":
+    if c_type == "cancel_task":
         return [("RECEIVED", "COMMAND_RECEIVED", 0.05), ("CANCELED", "TASK_CANCELED", 1.0)]
     if not command.safety.get("allow_execute", False):
         return [("RECEIVED", "COMMAND_RECEIVED", 0.05), ("REJECTED", "SAFETY_REJECTED", 0.0)]
+
+    step_name = f"EXECUTING_{c_type.upper()}"
     return [
         ("RECEIVED", "COMMAND_RECEIVED", 0.05),
         ("ACCEPTED", "SAFETY_ACCEPTED", 0.20),
-        ("PLANNING", "PLANNING_TRAJECTORY", 0.45),
-        ("EXECUTING", "EXECUTING_TASK", 0.75),
-        ("COMPLETED", "TASK_COMPLETED", 1.0),
+        ("PLANNING", f"PLANNING_{c_type.upper()}", 0.45),
+        ("EXECUTING", step_name, 0.75),
+        ("COMPLETED", f"{c_type.upper()}_COMPLETED", 1.0),
     ]
 
 

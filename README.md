@@ -1,4 +1,4 @@
-﻿# D405 编码靶标视觉 UI 交接项目
+# D405 编码靶标视觉 UI 交接项目
 
 这个项目是给视觉和运动控制联调用的交接版。它把当前最新版功能整理成一个独立文件夹，方便直接理解、运行和对接。
 
@@ -319,7 +319,35 @@ marker_yolo:
     "207": "target_3"
 ```
 
-## 11. 运动控制对接最小流程
+## 11. 任务命令发布与地图操纵
+
+UI 支持通过命令面板与下方 **MISSION MAP** 俯视地图下发 10 类任务指令：
+
+1. **`move_to (x, y)`**：末端移动到指定物理坐标。**直接在下方 MISSION MAP 地图上点击即可快速拾取物理坐标并回填到 X/Y 输入框，同时在地图上高亮标出 `WP: (x, y)`**。
+2. **`move_along (θ, d)`**：末端向 $\theta$ 方向移动 $d$ 米。
+3. **`move_for_pick`**：根据实时相对位置向锁定目标移动。
+4. **`move_for_place`**：向预设工位（Port A / Port B 等）移动。
+5. **`rotate (α)`**：末端固定位置旋转 $\alpha$ 角。
+6. **`rotate_arm (α, n)`**：第 $n$ 关节旋转 $\alpha$ 度。
+7. **`facing_arm (θ, n)`**：第 $n$ 关节面向 $\theta$ 方向。
+8. **`pick`**：夹爪抓取动作链。
+9. **`place`**：夹爪放置动作链。
+10. **`withdraw`** / **`reset`**：退回上一状态 / 恢复初始安全姿态。
+11. **`emergency_stop`**：独立最高优先级急停。
+
+任务发布后将写入：
+
+```text
+SpaceSnakeVisionUI/data/outbox/CMD-*.json
+```
+
+控制端处理完后回写状态到：
+
+```text
+SpaceSnakeVisionUI/data/inbox/{command_id}_status.json
+```
+
+## 12. 运动控制对接最小流程
 
 1. 视觉同学启动 UI：
 
@@ -354,7 +382,7 @@ marker_yolo:
    SpaceSnakeVisionUI/data/inbox/{command_id}_status.json
    ```
 
-## 12. 常见问题
+## 13. 常见问题
 
 ### YOLO 显示有目标，但没有 6DoF
 

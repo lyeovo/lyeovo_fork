@@ -1,4 +1,4 @@
-﻿# 视觉 UI 与运动控制数据接口
+# 视觉 UI 与运动控制数据接口
 
 本文给运动控制同学使用，说明如何从视觉 UI 获得目标相对相机的位置，以及如何通过文件桥接接收任务命令、回写执行状态。
 
@@ -150,10 +150,36 @@ SpaceSnakeVisionUI/data/outbox/CMD-*.json
 SpaceSnakeVisionUI/data/inbox/{command_id}_status.json
 ```
 
-命令中的目标字段和实时状态文件一致，核心字段是：
+### 5.1 支持的 10 类任务指令
+
+| 命令类型 `command_type` | 含义说明 | 核心参数 `params` |
+| :--- | :--- | :--- |
+| `move_to` | 末端移动到指定坐标 (x, y) | `{"x": float, "y": float}`（单位：米，支持地图点击输入） |
+| `move_along` | 末端向 $\theta$ 方向移动 $d$ 米 | `{"theta_deg": float, "distance_m": float}` |
+| `move_for_pick` | 根据实时相对位置向物体移动 | 自动携带当前锁定的 `selected_target` 及其位姿 |
+| `move_for_place` | 根据硬编码向放置位置移动 | `{"destination": "Assembly_Port_A"}` |
+| `rotate` | 末端固定位置旋转 $\alpha$ 角 | `{"alpha_deg": float}`（度） |
+| `rotate_arm` | 第 $n$ 关节旋转 $\alpha$ 度 | `{"joint_index": int, "alpha_deg": float}` |
+| `facing_arm` | 第 $n$ 关节面向 $\theta$ 方向 | `{"joint_index": int, "theta_deg": float}` |
+| `pick` | 夹爪抓取动作链 | `{}` |
+| `place` | 夹爪放置动作链 | `{}` |
+| `withdraw` | 退回上一状态 | `{}` |
+| `reset` | 恢复初始位置 | `{}` |
+| `emergency_stop` | 最高优先级急停 | `{}` |
+
+### 5.2 任务命令 JSON 示例 (Schema 2.0)
 
 ```json
 {
+  "schema_version": "2.0",
+  "command_id": "CMD-20260902-00001",
+  "timestamp": 1788320000.123,
+  "source": "SpaceSnakeVisionUI",
+  "command_type": "move_to",
+  "params": {
+    "x": 0.35,
+    "y": 0.20
+  },
   "selected_target": {
     "target_id": "target_1",
     "status": "POSE_6DOF",
@@ -161,6 +187,13 @@ SpaceSnakeVisionUI/data/inbox/{command_id}_status.json
     "pose_camera": {},
     "pose_base": null,
     "quality": {}
+  },
+  "destination": null,
+  "safety": {
+    "validation_passed": true,
+    "validation_message": "validation passed",
+    "estop_active": false,
+    "execution_mode": "real_robot"
   }
 }
 ```

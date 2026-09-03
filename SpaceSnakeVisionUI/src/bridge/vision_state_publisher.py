@@ -30,9 +30,17 @@ class VisionStatePublisher:
             "selected_target": selected,
             "targets": targets,
         }
-        tmp_path = self.latest_path.with_suffix(".json.tmp")
-        tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
-        os.replace(tmp_path, self.latest_path)
+        tmp_path = self.latest_path.with_suffix(f".tmp_{os.getpid()}")
+        try:
+            tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
+            os.replace(tmp_path, self.latest_path)
+        except (PermissionError, OSError):
+            # 兼容 Windows 下多进程/多线程瞬时文件读写锁冲突，避免 UI 异常崩溃
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except OSError:
+                pass
         return self.latest_path
 
 
