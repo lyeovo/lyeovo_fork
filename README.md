@@ -236,7 +236,9 @@ marker_yolo:
 - `num_dots >= 6` 但 `valid_depth_points < 6`：说明白点看到了，但深度不稳定。
 - `valid_depth_points >= 6` 仍不是 `POSE_6DOF`：检查模板匹配误差和误检点。
 
-## 输出 JSON 结构
+## 输出 JSON 与任务命令发布
+
+### 1. 实时视觉状态输出 (`latest_targets.json`)
 
 视觉模块输出结构核心字段如下：
 
@@ -263,6 +265,48 @@ marker_yolo:
 ```
 
 当 `status != POSE_6DOF` 时，`pose` 允许为空，控制模块应使用 `bearing` 做靠近或搜索。
+
+### 2. 任务命令发布契约 (`CMD-*.json`)
+
+UI 支持生成并发布 10 种标准化任务指令至 `data/outbox/`：
+
+| 任务类型 | 描述 | 核心参数 `params` |
+| :--- | :--- | :--- |
+| `move_to` | 末端移动到指定物理坐标 (x, y) | `{"x": float, "y": float}`（**支持在下方 Mission Map 地图上点击快速取点**） |
+| `move_along` | 末端向 $\theta$ 方向移动 $d$ 米 | `{"theta_deg": float, "distance_m": float}` |
+| `move_for_pick` | 根据实时相对位置向物体移动 | 自动关联锁定目标位姿 |
+| `move_for_place` | 根据硬编码向放置位置移动 | `{"destination": "Assembly_Port_A"}` |
+| `rotate` | 末端固定位置旋转 $\alpha$ 角 | `{"alpha_deg": float}` |
+| `rotate_arm` | 第 $n$ 关节旋转 $\alpha$ 度 | `{"joint_index": int, "alpha_deg": float}` |
+| `facing_arm` | 第 $n$ 关节面向 $\theta$ 方向 | `{"joint_index": int, "theta_deg": float}` |
+| `pick` | 夹爪抓取动作链 | `{}` |
+| `place` | 夹爪放置动作链 | `{}` |
+| `withdraw` | 退回上一状态 | `{}` |
+| `reset` | 恢复初始位置 | `{}` |
+| `emergency_stop` | 最高优先级急停 | `{}` |
+
+任务发布 JSON 示例（Schema v2.0）：
+
+```json
+{
+  "schema_version": "2.0",
+  "command_id": "CMD-20260902-00001",
+  "timestamp": 1788320000.123,
+  "source": "SpaceSnakeVisionUI",
+  "command_type": "move_to",
+  "params": {
+    "x": 0.350,
+    "y": 0.200
+  },
+  "selected_target": null,
+  "safety": {
+    "validation_passed": true,
+    "validation_message": "validation passed",
+    "estop_active": false,
+    "execution_mode": "real_robot"
+  }
+}
+```
 
 ## 目录说明
 

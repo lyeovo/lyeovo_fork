@@ -195,11 +195,16 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(root)
         self.camera_view.targetClicked.connect(self.select_by_pixel)
+        self.map.coordinateSelected.connect(self.on_map_coordinate_selected)
         self.command_panel.generateRequested.connect(self.generate_command)
         self.command_panel.publishRequested.connect(self.publish_command)
         self.command_panel.estopRequested.connect(self.emergency_stop)
         self.command_panel.cancelRequested.connect(self.cancel_task)
         self.task_sidebar_btn.clicked.connect(self.toggle_task_list)
+
+    def on_map_coordinate_selected(self, x: float, y: float) -> None:
+        self.command_panel.set_target_coordinate(x, y)
+        self.log.log(f"[MAP] Target coordinate selected: X={x:+.3f}m, Y={y:+.3f}m")
 
     def on_frame(self, image, objects) -> None:
         self.objects = list(objects)
@@ -235,13 +240,14 @@ class MainWindow(QMainWindow):
                 self.select_target(obj.target_id)
                 break
 
-    def generate_command(self, command_type, destination, approach, speed, gripper) -> None:
+    def generate_command(self, command_type: str, params: dict) -> None:
         obj = self._get_command_target()
+        destination = params.get("destination")
         result = validate_command(
             command_type,
-            obj,
-            destination,
-            approach,
+            params=params,
+            target=obj,
+            destination_name=destination,
             estop_active=self.estop_active,
             robot_busy=self.robot_busy,
             locked_at=self.selected_target_last_seen_at,
@@ -255,12 +261,10 @@ class MainWindow(QMainWindow):
             self.log.log(f"Pre-check warning: target status is {obj.status}; command saved for test only")
         self.pending_command = build_task_command(
             command_type,
-            obj,
-            destination,
-            approach,
-            speed,
-            gripper,
-            self.estop_active,
+            params=params,
+            selected_target=obj,
+            destination_name=destination,
+            estop_active=self.estop_active,
             robot_busy=self.robot_busy,
             validation_report=result.to_report(),
             locked_at=self.selected_target_locked_at,
@@ -274,7 +278,7 @@ class MainWindow(QMainWindow):
         )
         self.log.log(
             f"Command generated: {self.pending_command.command_id} {command_type} "
-            f"mode={result.execution_mode}"
+            f"params={params} mode={result.execution_mode}"
         )
         self._refresh_status_bar()
 
@@ -310,20 +314,18 @@ class MainWindow(QMainWindow):
     def cancel_task(self) -> None:
         result = validate_command(
             "cancel_task",
-            None,
-            None,
-            0.05,
+            params={},
+            target=None,
+            destination_name=None,
             estop_active=False,
             robot_busy=self.robot_busy,
         )
         cmd = build_task_command(
             "cancel_task",
-            None,
-            None,
-            0.05,
-            "demo_safe",
-            "demo_grip",
-            False,
+            params={},
+            selected_target=None,
+            destination_name=None,
+            estop_active=False,
             robot_busy=self.robot_busy,
             validation_report=result.to_report(),
         )

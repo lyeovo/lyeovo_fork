@@ -5,22 +5,35 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-TARGET_COMMANDS = {"move_near_target", "pick_target", "pick_and_place", "dock_to_interface"}
+ALL_COMMAND_TYPES = {
+    "move_to",
+    "move_along",
+    "move_for_pick",
+    "move_for_place",
+    "rotate",
+    "rotate_arm",
+    "facing_arm",
+    "pick",
+    "place",
+    "withdraw",
+    "reset",
+    "emergency_stop",
+    "cancel_task",
+}
+TARGET_REQUIRED_COMMANDS = {"move_for_pick"}
 BYPASS_BUSY_COMMANDS = {"emergency_stop", "cancel_task"}
 
 
 @dataclass
 class ValidationConfig:
-    target_max_age_s: float = 2.0
-    min_confidence: float = 0.5
-    min_stability: float = 0.3
-    require_depth_for_motion: bool = True
-    allow_simulation_without_pose_base: bool = True
-    require_pose_base_for_real_robot: bool = True
+    target_max_age_s: float = 3.0
+    min_confidence: float = 0.4
+    min_stability: float = 0.2
+    max_xy_range_m: float = 1.5
+    max_move_distance_m: float = 1.5
+    min_joint_index: int = 1
+    max_joint_index: int = 16
     block_when_robot_busy: bool = True
-    min_approach_distance_m: float = 0.01
-    max_approach_distance_m: float = 0.5
-    max_reach_m: float = 0.8
 
 
 @dataclass
@@ -43,9 +56,9 @@ class ValidationResult:
 
 def validate_command(
     command_type: str,
-    target,
-    destination_name: str | None,
-    approach_distance_m: float,
+    params: dict[str, Any] | None = None,
+    target = None,
+    destination_name: str | None = None,
     *,
     estop_active: bool = False,
     robot_busy: bool = False,
@@ -55,59 +68,69 @@ def validate_command(
 ) -> ValidationResult:
     cfg = config or ValidationConfig()
     now = time.time() if now is None else now
+    p = dict(params or {})
     checks: dict[str, Any] = {
         "command_type": command_type,
+        "params": p,
         "estop_active": estop_active,
         "robot_busy": robot_busy,
         "destination": destination_name,
-        "approach_distance_m": approach_distance_m,
     }
 
     if estop_active and command_type != "emergency_stop":
         return ValidationResult(False, "E-STOP is active", checks)
     if cfg.block_when_robot_busy and robot_busy and command_type not in BYPASS_BUSY_COMMANDS:
         return ValidationResult(False, "robot is busy", checks)
-    if not (cfg.min_approach_distance_m <= approach_distance_m <= cfg.max_approach_distance_m):
-        return ValidationResult(False, "approach distance out of range", checks)
 
-    if command_type not in TARGET_COMMANDS:
-        return ValidationResult(True, "command does not require target", checks, "simulation_only", False)
+    if command_type == "emergency_stop":
+        return ValidationResult(True, "E-STOP triggered", checks, "real_robot", True)
 
-    if target is None:
-        return ValidationResult(False, "no target selected", checks)
+    if command_type == "move_to":
+        if "x" not in p or "y" not in p:
+            return ValidationResult(False, "move_to requires 'x' and 'y' coordinates", checks)
+        try:
+            x, y = float(p["x"]), float(p["y"])
+            if abs(x) > cfg.max_xy_range_m or abs(y) > cfg.max_xy_range_m:
+                return ValidationResult(False, f"Target coordinate ({x:.2f}, {y:.2f}) exceeds work range ±{cfg.max_xy_range_m}m", checks)
+        except (ValueError, TypeError):
+            return ValidationResult(False, "Invalid numeric format for x or y", checks)
 
-    target_age_s = max(0.0, now - float(locked_at if locked_at is not None else getattr(target, "timestamp", now)))
-    checks.update(
-        {
-            "target_id": getattr(target, "target_id", None),
-            "target_age_s": target_age_s,
-            "confidence": getattr(target, "confidence", None),
-            "stability_score": getattr(target, "stability_score", None),
-            "depth_m": getattr(target, "depth_m", None),
-            "pose_base_available": getattr(target, "pose_base", None) is not None,
-            "status": getattr(target, "status", None),
-            "bearing_available": bool(getattr(target, "bearing", None) or getattr(target, "quality", {}).get("bearing")),
-        }
-    )
-    if target_age_s > cfg.target_max_age_s:
-        return ValidationResult(False, "target snapshot is stale", checks)
-    if (
-        command_type == "move_near_target"
-        and checks["bearing_available"]
-        and getattr(target, "status", None) in {"BEARING_ONLY", "APPROACH", "PARTIAL_DEPTH", "POSE_6DOF"}
-    ):
-        return ValidationResult(True, "bearing target accepted for approach; simulation only", checks, "simulation_only", False)
-    if float(getattr(target, "confidence", 0.0) or 0.0) < cfg.min_confidence:
-        return ValidationResult(False, "target confidence is too low", checks)
-    if float(getattr(target, "stability_score", 0.0) or 0.0) < cfg.min_stability:
-        return ValidationResult(False, "target stability is too low", checks)
-    if cfg.require_depth_for_motion and getattr(target, "depth_m", None) is None:
-        return ValidationResult(False, "target depth is missing", checks)
+    elif command_type == "move_along":
+        if "theta_deg" not in p or "distance_m" not in p:
+            return ValidationResult(False, "move_along requires 'theta_deg' and 'distance_m'", checks)
+        try:
+            d = float(p["distance_m"])
+            if d <= 0 or d > cfg.max_move_distance_m:
+                return ValidationResult(False, f"Distance {d:.2f}m must be in (0, {cfg.max_move_distance_m}]m", checks)
+        except (ValueError, TypeError):
+            return ValidationResult(False, "Invalid numeric format for theta or distance", checks)
 
-    pose_base = getattr(target, "pose_base", None)
-    if pose_base is None:
-        if cfg.allow_simulation_without_pose_base:
-            return ValidationResult(True, "pose_base missing; simulation only", checks, "simulation_only", False)
-        return ValidationResult(False, "pose_base missing", checks)
+    elif command_type in ("rotate_arm", "facing_arm"):
+        if "joint_index" not in p:
+            return ValidationResult(False, f"{command_type} requires 'joint_index'", checks)
+        try:
+            joint_idx = int(p["joint_index"])
+            if joint_idx < cfg.min_joint_index or joint_idx > cfg.max_joint_index:
+                return ValidationResult(False, f"Joint index {joint_idx} out of range [{cfg.min_joint_index}, {cfg.max_joint_index}]", checks)
+        except (ValueError, TypeError):
+            return ValidationResult(False, "Invalid joint index", checks)
+
+    if command_type in TARGET_REQUIRED_COMMANDS:
+        if target is None:
+            return ValidationResult(False, "no target selected for target-based motion", checks)
+        target_age_s = max(0.0, now - float(locked_at if locked_at is not None else getattr(target, "timestamp", now)))
+        checks.update(
+            {
+                "target_id": getattr(target, "target_id", None),
+                "target_age_s": target_age_s,
+                "confidence": getattr(target, "confidence", None),
+                "stability_score": getattr(target, "stability_score", None),
+                "status": getattr(target, "status", None),
+            }
+        )
+        if target_age_s > cfg.target_max_age_s:
+            return ValidationResult(False, "target snapshot is stale", checks)
+        if float(getattr(target, "confidence", 0.0) or 0.0) < cfg.min_confidence:
+            return ValidationResult(False, "target confidence is too low", checks)
 
     return ValidationResult(True, "validation passed", checks, "real_robot", True)

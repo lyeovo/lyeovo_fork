@@ -222,24 +222,25 @@ class TaskListWidget(QWidget):
     def _command_summary(self, command: TaskCommand, record: dict) -> str:
         target = command.selected_target or {}
         destination = command.destination or {}
-        motion = command.motion_params or {}
+        params = command.params or command.motion_params or {}
         safety = command.safety or {}
+        param_lines = [f"  {k}: {v}" for k, v in params.items()] if params else ["  (None)"]
         lines = [
             f"Command ID: {command.command_id}",
             f"Task Type: {command.command_type}",
             f"Status: {record.get('latest_status', '--')}",
             f"Published To: {record.get('publish_ref') or '--'}",
             "",
+            "Parameters:",
+            *param_lines,
+            "",
             f"Target ID: {target.get('target_id', '--')}",
             f"Target Class: {target.get('class_name', '--')}",
             f"Confidence: {target.get('confidence', '--')}",
             f"Stability: {target.get('stability_score', '--')}",
-            f"Depth: {target.get('depth_m', '--')} m",
+            f"Depth: {target.get('depth_m', '--')} m" if target.get('depth_m') is not None else "Depth: --",
             "",
             f"Destination: {destination.get('name', '--')}",
-            f"Approach: {motion.get('approach_distance_m', '--')} m",
-            f"Speed: {motion.get('speed_mode', '--')}",
-            f"Gripper: {motion.get('gripper_mode', '--')}",
             "",
             f"Execution Mode: {safety.get('execution_mode', '--')}",
             f"Allow Execute: {safety.get('allow_execute', '--')}",

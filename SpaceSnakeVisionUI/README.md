@@ -20,11 +20,23 @@ D405 / Mock Camera
 - 支持 Mock 检测器和 YOLO 检测器，YOLO 默认使用 `yolo11n.pt`。
 - 可以在目标表格或相机画面中点击检测框锁定目标。
 - 锁定目标后保存目标快照，避免视觉流刷新导致目标 ID 或目标对象丢失。
-- 生成任务前会做安全校验，包括急停状态、机器人忙闲状态、目标是否存在、目标置信度、稳定度、深度和快照时效。
+- 生成任务前会做安全校验，包括急停状态、机器人忙闲状态、坐标/参数合法性、目标是否存在、目标置信度、稳定度与时效。
 - 发布命令后写入 `data/outbox/CMD-*.json`，供控制模块读取。
-- 支持 `pick_and_place`、`move_near_target`、`pick_target`、`dock_to_interface`、`home`、`cancel_task`、`emergency_stop` 等任务级命令。
+- 支持 10 类全新标准化任务级命令：
+  - `move_to (x, y)`：末端移动到指定坐标（**支持在 Mission Map 俯视地图上点击直接填入坐标并高亮 Waypoint**）
+  - `move_along (θ, d)`：末端向 $\theta$ 方向移动 $d$ 米
+  - `move_for_pick`：根据实时相对位置向物体移动
+  - `move_for_place`：根据硬编码向放置位置移动
+  - `rotate (α)`：末端固定位置旋转 $\alpha$ 角
+  - `rotate_arm (α, n)`：第 $n$ 关节旋转 $\alpha$ 度
+  - `facing_arm (θ, n)`：第 $n$ 关节面向 $\theta$ 方向
+  - `pick`：夹爪抓取动作链
+  - `place`：夹爪放置动作链
+  - `withdraw`：退回上一状态
+  - `reset`：恢复初始位置
+  - `emergency_stop`：最高优先级急停
 - 支持 MockControlServer 写回 `RECEIVED`、`ACCEPTED`、`PLANNING`、`EXECUTING`、`COMPLETED`、`REJECTED`、`CANCELED`、`ESTOP_TRIGGERED` 等状态。
-- UI 左侧内置可展开/收起的任务列表侧边栏。生成任务后会立即出现任务记录，点击任务可以查看任务类型、目标截图、目标信息、目的地、安全校验和状态历史。
+- UI 左侧内置可展开/收起的任务列表侧边栏。生成任务后会立即出现任务记录，点击任务可以查看任务类型、目标截图、输入参数 params、目的地、安全校验和状态历史。
 - 主界面右侧有竖向滚动条；目标表、目标详情、命令面板、相机画面、地图和日志之间都有可拖动分隔条，可以按演示需要调整区域大小。
 - 预留 ROS2 JSON 桥接。没有安装 `rclpy` 时会自动回退到 file mode，不影响普通演示。
 
@@ -92,13 +104,12 @@ UI 每 600 ms 轮询一次 inbox。收到状态后，任务列表、任务日志
    .\.venv\Scripts\python.exe -m src.bridge.mock_control_server --mode file
    ```
 
-3. 在 UI 的目标表格或相机画面中选择一个目标，例如 `TGT-001`。
-4. 在 Command Panel 中选择任务类型，例如 `pick_and_place`。
-5. 选择放置区域，例如 `Assembly_Port_A`。
-6. 点击“生成任务”。
-7. 点击“发布命令”。
-8. 点击界面最左侧的 `>` 展开任务列表侧边栏。
-9. 在任务列表中点击对应任务，查看目标截图、任务摘要、发布路径和状态历史。
+3. 在 Command Panel 中选择任务类型，例如 `move_to (x, y)`。
+4. 在下方 **MISSION MAP** 俯视地图中点击想要移动的目标位置，地图会自动拾取物理坐标并填入 X/Y 输入框，同时在地图上高亮标出 `WP: (x, y)`。
+5. 点击“生成任务”。
+6. 点击“发布命令”。
+7. 点击界面最左侧的 `>` 展开任务列表侧边栏。
+8. 在任务列表中点击对应任务，查看目标截图、参数详情、发布路径和状态历史。
 
 正常情况下，任务状态会依次变为：
 

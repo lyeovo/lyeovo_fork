@@ -15,10 +15,7 @@ __pycache__/
 *.bak
 
 # Runtime data and command bridge traffic
-SpaceSnakeVisionUI/data/outbox/
-SpaceSnakeVisionUI/data/inbox/
-SpaceSnakeVisionUI/data/logs/
-SpaceSnakeVisionUI/data/recordings/
+SpaceSnakeVisionUI/data/
 snake_vision_d405_target/data/output/
 
 # YOLO training artifacts and collected images
@@ -32,3 +29,9 @@ SpaceSnakeVisionUI/datasets/marker_targets/labels/
 # Downloadable base weights; keep trained UI marker model under SpaceSnakeVisionUI/models/
 yolo11n.pt
 SpaceSnakeVisionUI/yolo11n.pt
+
+# Handover repository (has its own git repo and remote)
+D405_MarkerVision/
+
+# Agent local rules
+.agents/
