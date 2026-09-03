@@ -1,3 +1,4 @@
+from typing import Any, Dict, Optional
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
@@ -5,6 +6,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QPlainTextEdit,
     QPushButton,
     QSizePolicy,
     QSpinBox,
@@ -78,12 +80,34 @@ class TaskCommandPanel(QWidget):
         button_grid.addWidget(self.cancel_btn, 1, 0)
         button_grid.addWidget(self.estop_btn, 1, 1)
         layout.addLayout(button_grid)
+
+        # 指令生成结果预览与安全校验标签
+        self.validation_label = QLabel("安全状态: 就绪待生成")
+        self.validation_label.setStyleSheet("color: #00E5FF; font-size: 11px;")
+        layout.addWidget(self.validation_label)
+
+        self.preview_edit = QPlainTextEdit()
+        self.preview_edit.setReadOnly(True)
+        self.preview_edit.setMaximumHeight(100)
+        self.preview_edit.setPlaceholderText("生成的指令 JSON 报文将在此预览...")
+        self.preview_edit.setObjectName("LogConsole")
+        layout.addWidget(self.preview_edit)
+
         layout.addStretch(1)
 
         self.generate_btn.clicked.connect(self._generate)
         self.publish_btn.clicked.connect(self.publishRequested.emit)
         self.cancel_btn.clicked.connect(self.cancelRequested.emit)
         self.estop_btn.clicked.connect(self.estopRequested.emit)
+
+    def set_preview(self, json_str: str, report: Optional[dict] = None) -> None:
+        self.preview_edit.setPlainText(json_str)
+        if report:
+            ok = bool(report.get("validation_passed", False))
+            msg = str(report.get("validation_message", "未知校验"))
+            color = "#2EEA8A" if ok else "#FF4D5A"
+            self.validation_label.setText(f"安全状态: {msg}")
+            self.validation_label.setStyleSheet(f"color: {color}; font-weight: bold; font-size: 11px;")
 
     def _build_param_forms(self) -> None:
         # Form 0: move_to (x, y)
