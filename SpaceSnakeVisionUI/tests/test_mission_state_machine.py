@@ -66,12 +66,49 @@ def test_mission_state_machine_reset_and_jump():
     store = SystemStateStore()
     sm = MissionStateMachine(store)
 
+    sm.advance()  # SYS_START -> completed
+    sm.advance()  # ROBOT_START -> completed
+    assert sm.is_completed("SYS_START")
+
     sm.jump_to("TARGET_REACHED")
     assert sm.current_node_id == "TARGET_REACHED"
 
     sm.reset()
     assert sm.current_node_id == "SYS_START"
     assert len(sm.completed_nodes) == 0
+
+
+def test_mission_new_cycle_clears_completed_highlights():
+    store = SystemStateStore()
+    sm = MissionStateMachine(store)
+
+    # 跳转到末尾节点 MISSION_COMPLETE
+    sm.jump_to("MISSION_COMPLETE")
+    sm.completed_nodes.add("ROBOT_PLACING")
+    assert len(sm.completed_nodes) > 0
+
+    # 从 MISSION_COMPLETE 推进进入新循环 -> 回到 SYS_START，高亮应全部清空
+    next_node = sm.advance()
+    assert next_node.node_id == "SYS_START"
+    assert len(sm.completed_nodes) == 0
+    assert not sm.is_completed("MISSION_COMPLETE")
+    assert not sm.is_completed("ROBOT_PLACING")
+
+
+def test_mission_jump_backward_clears_subsequent_highlights():
+    store = SystemStateStore()
+    sm = MissionStateMachine(store)
+
+    sm.jump_to("OPERATOR_PLACE_TASK")
+    sm.completed_nodes.update(["SYS_START", "ROBOT_START", "TARGET_SELECT_PICK", "OPERATOR_PICK_CMD"])
+    
+    # 模拟跳回到前面的 TARGET_SELECT_PICK，其后续节点的完成高亮应当被清除
+    sm.jump_to("TARGET_SELECT_PICK")
+    assert sm.current_node_id == "TARGET_SELECT_PICK"
+    assert not sm.is_completed("TARGET_SELECT_PICK")
+    assert not sm.is_completed("OPERATOR_PICK_CMD")
+    assert sm.is_completed("SYS_START")
+    assert sm.is_completed("ROBOT_START")
 
 
 def test_advance_if_hint_matches_and_advances():
