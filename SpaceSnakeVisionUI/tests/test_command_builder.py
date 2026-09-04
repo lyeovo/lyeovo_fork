@@ -21,9 +21,9 @@ def test_build_all_ten_command_types():
     assert cmd3.command_type == "move_for_pick"
 
     # 4. move_for_place
-    cmd4 = build_task_command("move_for_place", {"destination": "Assembly_Port_A"})
+    cmd4 = build_task_command("move_for_place", {"destination": "Goal_Zone"})
     assert cmd4.command_type == "move_for_place"
-    assert cmd4.destination["name"] == "Assembly_Port_A"
+    assert cmd4.destination["name"] == "Goal_Zone"
 
     # 5. rotate
     cmd5 = build_task_command("rotate", {"alpha_deg": 90.0})

@@ -4,22 +4,13 @@ from typing import Any, Dict, Optional
 from ..models import Pose3D, TaskCommand, new_command_id
 
 
+# 单一终点放置区（与 mission_map.GOAL_ZONE 对齐）：地图右侧，中心 map(x=4.0, y=2.0) → base(x=4.0, z=2.0)
 ZONE_POSES = {
-    "Assembly_Port_A": Pose3D(frame_id="robot_base"),
-    "Assembly_Port_B": Pose3D(frame_id="robot_base"),
-    "Holding_Zone": Pose3D(frame_id="robot_base"),
-    "Safe_Zone": Pose3D(frame_id="robot_base"),
+    "Goal_Zone": Pose3D(frame_id="robot_base"),
 }
-ZONE_POSES["Assembly_Port_A"].position.x = 0.35
-ZONE_POSES["Assembly_Port_A"].position.y = 0.10
-ZONE_POSES["Assembly_Port_A"].position.z = 0.20
-ZONE_POSES["Assembly_Port_B"].position.x = 0.35
-ZONE_POSES["Assembly_Port_B"].position.y = -0.10
-ZONE_POSES["Assembly_Port_B"].position.z = 0.20
-ZONE_POSES["Holding_Zone"].position.x = 0.20
-ZONE_POSES["Holding_Zone"].position.z = 0.15
-ZONE_POSES["Safe_Zone"].position.x = 0.10
-ZONE_POSES["Safe_Zone"].position.z = 0.30
+ZONE_POSES["Goal_Zone"].position.x = 4.0
+ZONE_POSES["Goal_Zone"].position.y = 0.10
+ZONE_POSES["Goal_Zone"].position.z = 2.0
 
 
 def build_task_command(
