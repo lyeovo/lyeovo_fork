@@ -75,8 +75,8 @@
   }
   ```
 - **字段规范与物理量**：
-  - `x` (`float`)：目标横向位置，单位：**米 (m)**，范围 $[-1.5, +1.5]$。基座坐标系中指向机器人右侧为正。
-  - `y` (`float`)：目标纵向（前进）位置，单位：**米 (m)**，范围 $[-1.5, +1.5]$。基座坐标系中向前为正。
+  - `x` (`float`)：目标横向位置，单位：**米 (m)**，范围 $[-6, +6]$。基座坐标系中指向机器人右侧为正。
+  - `y` (`float`)：目标纵向（前进）位置，单位：**米 (m)**，范围 $[-6, +6]$。基座坐标系中向前为正。
 - **`selected_target`**：通常为 `null`（若当前界面锁定了目标，会同时附带该目标快照作为参考）。
 - **`destination`**：`null`。
 
@@ -94,7 +94,7 @@
   ```
 - **字段规范与物理量**：
   - `theta_deg` (`float`)：移动方向方位角，单位：**度 (°)**，范围 $[-180.0, +180.0]$。$0^\circ$ 表示正前方，$+90^\circ$ 表示右侧，$-90^\circ$ 表示左侧。
-  - `distance_m` (`float`)：单次位移距离，单位：**米 (m)**，范围 $(0, 1.5]$。
+  - `distance_m` (`float`)：单次位移距离，单位：**米 (m)**，范围 $(0, 6]$。
 - **`selected_target`**：`null`。
 - **`destination`**：`null`。
 
@@ -149,26 +149,26 @@
 
 ### 4. `move_for_place`：根据硬编码向放置位置移动
 
-- **指令功能**：装配放置寻位。驱动机械臂从当前抓持状态移动到预设的硬编码装配工位（如接口 A、接口 B）。
+- **指令功能**：装配放置寻位。驱动机械臂从当前抓持状态移动到预设的硬编码终点放置区（`Goal_Zone`，位于基座右前方）。
 - **`params` 结构**：
   ```json
   "params": {
-    "destination": "Assembly_Port_A"
+    "destination": "Goal_Zone"
   }
   ```
 - **`destination` 字段结构**：
   ```json
   "destination": {
-    "name": "Assembly_Port_A",
+    "name": "Goal_Zone",
     "pose_base": {
       "frame_id": "robot_base",
-      "position": {"x": 0.35, "y": 0.10, "z": 0.20},
+      "position": {"x": 4.0, "y": 0.10, "z": 2.0},
       "orientation": {"qx": 0.0, "qy": 0.0, "qz": 0.0, "qw": 1.0}
     }
   }
   ```
 - **字段规范与物理量**：
-  - `destination.name` (`string`)：工位标识，可选 `"Assembly_Port_A"`、`"Assembly_Port_B"`、`"Holding_Zone"`、`"Safe_Zone"`。
+  - `destination.name` (`string`)：工位标识，当前仅 `"Goal_Zone"`（单一终点区域，位于基座右前方）。
   - `destination.pose_base` (`object`)：预置的基座坐标系空间位姿（米与四元数）。
 
 ---
@@ -198,7 +198,7 @@
   }
   ```
 - **字段规范与物理量**：
-  - `joint_index` (`int`)：目标关节序号（1 索引），范围 $[1, 16]$。1 表示最靠近底座的第 1 关节。
+  - `joint_index` (`int`)：目标关节序号（1 索引），范围 $[1, 6]$。1 表示最靠近底座的第 1 关节。
   - `alpha_deg` (`float`)：增量旋转角度，单位：**度 (°)**，范围 $[-180.0, +180.0]$。
 
 ---
@@ -214,7 +214,7 @@
   }
   ```
 - **字段规范与物理量**：
-  - `joint_index` (`int`)：目标关节序号，范围 $[1, 16]$。
+  - `joint_index` (`int`)：目标关节序号，范围 $[1, 6]$。
   - `theta_deg` (`float`)：绝对朝向角，单位：**度 (°)**，基座坐标系下范围 $[-180.0, +180.0]$。
 
 ---
@@ -253,7 +253,7 @@
 
 ### 11. `reset`：恢复初始位置
 
-- **指令功能**：系统零位复位。驱动蛇形臂所有关节（1~16 关节）依次回归机械零点（Home Position / 收拢姿态），夹爪复位，清除内部临时误差。
+- **指令功能**：系统零位复位。驱动蛇形臂所有关节（1~6 关节）依次回归机械零点（Home Position / 收拢姿态），夹爪复位，清除内部临时误差。
 - **`params` 结构**：
   ```json
   "params": {}
@@ -293,9 +293,11 @@
 
 ## 三、控制模块状态反馈规范 (TaskStatus)
 
-当控制模块在 `data/outbox/` 读取到任一任务文件后，**必须在 `data/inbox/{command_id}_status.json` 中写回状态信息**，UI 界面将每 600ms 轮询一次并更新界面任务列表和状态指示灯。
+当控制模块在 `data/outbox/` 读取到任一任务文件后，**必须在 `data/inbox/{command_id}_status.json` 中写回状态信息**，UI 界面将每 600ms 轮询一次并更新界面任务列表、监控页健康灯与状态机联动。
 
-### 反馈 JSON 格式：
+> **写回约定（与控制端 `taskWriteStatus.m` 一致）**：状态文件采用**固定文件名 `{command_id}_status.json` 原地覆盖**（建议先写 `tmp` 再原子 `movefile/replace`），每次状态跃迁覆盖同一文件。UI 侧 `FileBridge` 以**内容哈希（sha1）指纹**去重——只要文件内容变化即重新解析，因此**同一命令的 RECEIVED→ACCEPTED→PLANNING→EXECUTING→COMPLETED 全过程都会被逐帧捕获**，无需为每个状态生成不同文件名。
+
+### 反馈 JSON 格式（v1.0，含扩展遥测）：
 ```json
 {
   "schema_version": "1.0",
@@ -307,11 +309,45 @@
   "message": "Moving end-effector to (0.35, -0.12)",
   "robot_state": {
     "state": "EXECUTING",
-    "joint_positions": [0.0, 12.5, -5.2, 0.0],
+    "end_effector_pose_base": {
+      "frame_id": "robot_base",
+      "position": {"x": 0.3375, "y": -0.0775, "z": 0.0},
+      "orientation_euler": {"roll": 0.0, "pitch": 0.0, "yaw": 0.0},
+      "orientation_quat": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+    },
+    "joint_positions": [9.0, -14.25, 20.5, -4.5, 14.0, -6.25],
+    "joint_positions_unit": "deg",
+    "gripper": 0,
     "message": "normal"
+  },
+  "planner": {
+    "method_used": "rrtstar",
+    "solve_time_ms": 21.0,
+    "tracking_error_mm": 4.1,
+    "angle_error_deg": 1.7
   }
 }
 ```
+
+### `robot_state` 字段规范（控制端按能力选填，UI 缺失即显示 “—”）：
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `state` | `string` | 机器人状态串（可复用 `status`，如 `EXECUTING`/`COMPLETED`/`ESTOP_TRIGGERED`），UI Header 直接显示。 |
+| `end_effector_pose_base` | `object` \| `[]` | 末端在**基座坐标系**的位姿，形状对齐 `models.Pose3D`。平面蛇形臂 `z=0`、`roll=pitch=0`、`yaw=θ`。**无数据时 MATLAB `jsonencode` 会写成 `[]`，UI 已容忍并归一化为空。** |
+| `joint_positions` | `float[6]` | 6 关节角。 |
+| `joint_positions_unit` | `string` | **新增**：`"deg"`（缺省）或 `"rad"`。标注 `"rad"` 时 UI 自动换算为度显示，消除单位歧义。 |
+| `gripper` | `int` | **新增**：`0`=HOLD（保持）、`1`=OPEN（张开）、`2`=CLOSE（闭合），对齐控制端 `gripper_seq`。UI 映射为 HOLDING/OPEN/CLOSED。 |
+| `message` | `string` | 附加信息。 |
+
+### `planner` 字段规范（顶层可选块，控制端有则填）：
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `method_used` | `string` | 实际规划/求解算法（如 `auto`/`rrtstar`/`cvae`/`momentum`）。 |
+| `solve_time_ms` | `float` | IK/轨迹求解耗时（毫秒）。 |
+| `tracking_error_mm` | `float` | 末端跟踪误差（对应控制端 `si.dist_end`，毫米）。 |
+| `angle_error_deg` | `float` | 末端角度误差（对应 `si.err_ang`，度）。 |
+
+> **向后兼容**：`robot_state` 与 `planner` 的所有扩展字段均为可选；控制端未提供时，UI 对应监控项显示占位符（“—” / “STANDBY”），不影响既有 `state`/`joint_positions`/`message` 最小回传。UI 解析器会**忽略未知键**，控制端可安全追加自定义字段。
 
 ### 状态枚举值（`status`）：
 - **`RECEIVED`**：控制模块已成功读取文件。
@@ -323,3 +359,72 @@
 - **`CANCELED`**：收到 `cancel_task` 后已平稳刹车停机。
 - **`ESTOP_TRIGGERED`**：进入急停停机状态。
 - **`FAILED`**：执行过程中遇到异常（如关节超温、力矩超限或视觉目标丢失超时）。
+
+---
+
+## 四、实时遥测 TCP 状态流（预留 · 契约已冻结）
+
+> **状态**：契约已冻结，**UI 侧接收端待实现**。现役遥测通道为第三节文件桥 TaskStatus（事件级低频）；TCP 流面向未来 20–50Hz 高频实时遥测（关节/夹爪/目标），对齐控制端 `tcpStateStreamServer.m` + `tcpEncodeFrame.m`。UI 已在 `src/bridge/telemetry_stream_client.py` 提供**解帧纯函数与接收端骨架**：`decode_state_frame` / `encode_frame` / `TelemetryStreamClient.feed` 已实现并被单测覆盖，`start()` 的 socket 连接与接收循环待接线（当前抛 `NotImplementedError`，未连入主窗口）。
+
+### 4.1 帧格式（Framing）
+每帧 = **4 字节大端无符号长度前缀 `N`** + **`N` 字节 UTF-8 JSON 体**：
+
+```
+[ 00 00 00 N ][ {JSON body ...} ]
+```
+
+- 长度前缀 `N` 仅计 JSON 体字节数，不含前缀自身。
+- 接收方按前缀切分，天然支持**粘包/半包**：字节不足则缓存等待，一次可读多帧。
+- UI 侧单帧上限 `MAX_FRAME_BYTES = 1 MiB`；超限视为链路损坏，应重置缓冲并重连。
+
+### 4.2 消息体通用结构
+```json
+{
+  "v": 1,
+  "type": "STATE",
+  "seq": 12345,
+  "command_id": "CMD-20260903-00001",
+  "data": { }
+}
+```
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `v` | `int` | 协议版本，固定 `1`。 |
+| `type` | `string` | 消息类型（见 4.3）。 |
+| `seq` | `int` | 单调递增序号，用于丢帧检测。 |
+| `command_id` | `string` | 关联命令 ID；无关联时为空串 `""`。 |
+| `data` | `object` | 类型相关负载。 |
+
+### 4.3 消息类型（`type`）
+| type | 方向 | 说明 |
+| --- | --- | --- |
+| `HELLO` | 控制端 → UI | 连接握手，携带能力/版本信息。 |
+| `HELLO_ACK` | UI → 控制端 | 握手确认。 |
+| `CMD` | UI → 控制端 | 下发任务指令（等价文件桥 outbox 命令）。 |
+| `CMD_ACK` | 控制端 → UI | 指令接收确认。 |
+| `STATE` | 控制端 → UI | **高频实时遥测**（见 4.4）。 |
+| `DONE` | 控制端 → UI | 当前命令执行结束。 |
+| `PING` / `PONG` | 双向 | 心跳保活。 |
+| `ERROR` | 双向 | 错误上报。 |
+
+### 4.4 `STATE.data` 字段表
+```json
+{
+  "t": 1788410002.500,
+  "joints": [0.0, 0.218, -0.091, 0.524, -0.175, 0.087],
+  "gripper": 1,
+  "obj": [0.35, -0.12],
+  "obj_frame": "base",
+  "obj_absent": false
+}
+```
+| 字段 | 类型 | 单位/取值 | 说明 |
+| --- | --- | --- | --- |
+| `t` | `float` | 秒 | 采样时间戳。 |
+| `joints` | `float[6]` | **弧度 rad（绝对角）** | 6 关节绝对角。⚠️ 与文件桥 `joint_positions` 缺省的**度**不同，TCP 流固定为 **rad**，UI 接收端需换算为度。 |
+| `gripper` | `int` | `0`/`1`/`2` | 0=HOLD、1=OPEN、2=CLOSE（同文件桥约定）。 |
+| `obj` | `[x, y]` | 米 m | 目标平面坐标。 |
+| `obj_frame` | `string` | `'base'` \| `'cam'` | `obj` 所在坐标系。 |
+| `obj_absent` | `bool` | — | 目标是否丢失。 |
+
+> **接线约定（待实现）**：UI 接收端解出 `STATE` 帧后，应把 `joints`（rad→deg）写入 `SystemStateStore.update_robot(joint_angles_deg=..., telemetry_source="tcp")`，`gripper`→`gripper_state`，`obj`/`obj_absent`→视觉目标叠加。`telemetry_source` 字段用于在监控页标注当前遥测来自 `file` 还是 `tcp`。
