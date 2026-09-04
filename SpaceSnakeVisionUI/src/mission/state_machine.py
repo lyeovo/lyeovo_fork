@@ -60,6 +60,16 @@ class MissionStateMachine(QObject):
         if not target_id:
             target_id = "SYS_START"
 
+        # 进入新循环时（从 MISSION_COMPLETE 步入下一阶段，或回到 SYS_START），清空所有步骤的高亮与完成标记
+        if cur.node_id == "MISSION_COMPLETE" or target_id == "SYS_START":
+            self.completed_nodes.clear()
+
+        # 抓取失败重试分支（PICK_CHECK -> OPERATOR_PICK_CMD），撤销相关执行节点的完成标记
+        if cur.node_id == "PICK_CHECK" and not decision_choice:
+            self.completed_nodes.discard("PICK_CHECK")
+            self.completed_nodes.discard("ROBOT_PICKING")
+            self.completed_nodes.discard("OPERATOR_PICK_CMD")
+
         self.current_node_id = target_id
         self._sync_to_store()
         self.nodeChanged.emit(self.current_node_id)
@@ -78,9 +88,19 @@ class MissionStateMachine(QObject):
         return False
 
     def jump_to(self, node_id: str) -> bool:
-        """跳转到特定节点"""
+        """跳转到特定节点，并自动清理目标节点之后的高亮状态"""
         if node_id not in NODE_MAP:
             return False
+        
+        target_node = NODE_MAP[node_id]
+        if node_id == "SYS_START":
+            self.completed_nodes.clear()
+        else:
+            # 清除所有序号大于等于 target_node.index 的节点的完成高亮
+            for n in WORKFLOW_NODES:
+                if n.index >= target_node.index:
+                    self.completed_nodes.discard(n.node_id)
+
         self.current_node_id = node_id
         self._sync_to_store()
         self.nodeChanged.emit(self.current_node_id)

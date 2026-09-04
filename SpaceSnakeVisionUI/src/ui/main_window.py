@@ -302,9 +302,12 @@ class MainWindow(QMainWindow):
             x1, y1, x2, y2 = obj.bbox_xyxy
             if x1 <= x <= x2 and y1 <= y <= y2:
                 self.select_target(obj.target_id)
-                # 联动状态机：若当前等待目标点选，则直接前进
+                # 联动状态机：若当前处于视野确认或点选目标阶段，自动生成并发布 move_for_pick
                 if self.state_machine.current_node_id in ("VISION_CHECK_1", "VISION_CHECK_2", "TARGET_SELECT_PICK"):
                     self.state_machine.jump_to("TARGET_SELECT_PICK")
+                    self.log.log(f"[MISSION] 相机画面点选锁定目标 {obj.target_id}，自动生成并发布靠近抓取指令 (move_for_pick)...")
+                    self.generate_command("move_for_pick", {})
+                    self.publish_command()
                 break
 
     def on_map_coordinate_selected(self, x: float, y: float) -> None:
@@ -350,8 +353,16 @@ class MainWindow(QMainWindow):
             self.generate_command("place", {})
             self.publish_command()
 
+        elif nid == "MISSION_COMPLETE":
+            # 任务完成，点击进入新工件循环：清空上周期目标锁定与各步骤高亮，回到起点
+            self.selected_id = None
+            self.selected_target_snapshot = None
+            self.store.update_vision(selected_target_id=None)
+            next_node = self.state_machine.advance()
+            self.log.log(f"[MISSION] 进入新工件循环，已清空上周期完成高亮与目标锁定，回到 [{next_node.index:02d}] {next_node.title}。")
+
         else:
-            # 非命令节点（SYS_START / ROBOT 等待 / COMPLETE）：手动推进
+            # 非命令节点（SYS_START / ROBOT 等待）：手动推进
             next_node = self.state_machine.advance()
             self.log.log(f"[MISSION] Advanced to stage: [{next_node.index:02d}] {next_node.title}")
 
@@ -367,7 +378,10 @@ class MainWindow(QMainWindow):
 
     def on_mission_reset(self) -> None:
         self.state_machine.reset()
-        self.log.log("[MISSION] Workflow reset to start.")
+        self.selected_id = None
+        self.selected_target_snapshot = None
+        self.store.update_vision(selected_target_id=None)
+        self.log.log("[MISSION] 流程已重置回初始状态，各步骤高亮与目标锁定已全部清空。")
 
     # ---------------- 命令生成与发布 ----------------
     def generate_command(self, command_type: str, params: dict) -> None:
