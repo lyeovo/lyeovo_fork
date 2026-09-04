@@ -2,8 +2,16 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from typing import Any, Dict, List, Optional
+
+
+def _pick_fields(cls, data: Any) -> Dict[str, Any]:
+    """将 dict 过滤为 dataclass 已声明字段，容忍控制端回传的未知键。"""
+    if not isinstance(data, dict):
+        return {}
+    allowed = {f.name for f in fields(cls)}
+    return {k: v for k, v in data.items() if k in allowed}
 
 
 @dataclass
@@ -96,6 +104,8 @@ class RobotState:
     state: str = "IDLE"
     end_effector_pose_base: Optional[Pose3D] = None
     joint_positions: List[float] = field(default_factory=list)
+    joint_positions_unit: str = "deg"  # "deg" | "rad"；控制端可注明，缺省按度
+    gripper: int = 0  # 0=HOLD, 1=OPEN, 2=CLOSE（对齐控制端 gripper_seq）
     message: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
@@ -106,9 +116,10 @@ class RobotState:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RobotState":
-        data = dict(data)
-        if data.get("end_effector_pose_base"):
-            data["end_effector_pose_base"] = Pose3D.from_dict(data["end_effector_pose_base"])
+        data = _pick_fields(cls, data)
+        ee = data.get("end_effector_pose_base")
+        # MATLAB jsonencode 会把空位姿写成 []；仅在拿到真正的 dict 时解析
+        data["end_effector_pose_base"] = Pose3D.from_dict(ee) if isinstance(ee, dict) else None
         return cls(**data)
 
 
@@ -148,6 +159,7 @@ class TaskStatus:
     progress: float
     message: str
     robot_state: RobotState = field(default_factory=RobotState)
+    planner: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -158,7 +170,13 @@ class TaskStatus:
     @classmethod
     def from_json(cls, raw: str) -> "TaskStatus":
         data = json.loads(raw)
-        data["robot_state"] = RobotState.from_dict(data.get("robot_state", {}))
+        return cls.from_dict(data)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "TaskStatus":
+        data = _pick_fields(cls, data)
+        data["robot_state"] = RobotState.from_dict(data.get("robot_state") or {})
+        data.setdefault("planner", {})
         return cls(**data)
 
 

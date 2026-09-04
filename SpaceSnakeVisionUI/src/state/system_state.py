@@ -36,6 +36,11 @@ class RobotTelemetry:
     ee_yaw: float = 0.0
     joint_angles_deg: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
     gripper_state: str = "OPEN"  # OPEN, CLOSING, CLOSED, HOLDING
+    method_used: str = "--"  # 规划算法（auto/rrt/rrtstar/cvae/momentum...）
+    solve_time_ms: Optional[float] = None  # IK/轨迹求解耗时
+    tracking_error_mm: Optional[float] = None  # 末端跟踪误差 (dist_end)
+    angle_error_deg: Optional[float] = None  # 末端角度误差 (err_ang)
+    telemetry_source: str = "file"  # 遥测来源通道: file | tcp
 
 
 @dataclass
@@ -67,6 +72,8 @@ class SystemHealth:
     bridge_mode: str = "FILE"
     estop_active: bool = False
     robot_busy: bool = False
+    bridge_rtt_ms: Optional[float] = None  # publish→首个状态回传实测往返延时
+    last_status_rx: Optional[float] = None  # 最近一次收到状态的时刻（新鲜度判定）
 
 
 @dataclass
