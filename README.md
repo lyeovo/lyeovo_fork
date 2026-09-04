@@ -29,10 +29,9 @@
 
 ```text
 D405_MarkerVision/
-├── README.md                         # 本交付全景说明
+├── README.md                         # 本交付全景说明与快速开箱
 ├── docs/
-│   ├── CONTROL_INTERFACE.md          # 运动控制联调简要说明
-│   └── TASK_COMMAND_INTERFACE.md     # 全任务控制指令接口技术规范 (v2.0)
+│   └── TASK_COMMAND_INTERFACE.md     # 全任务控制指令接口技术规范 (v2.0 权威标准)
 ├── snake_vision_d405_target/         # D405 红外白点检测与模板学习库
 │   ├── config/
 │   │   ├── runtime_config.yaml       # 靶标参数与两级状态机配置
@@ -47,7 +46,7 @@ D405_MarkerVision/
     │   ├── state/                    # 集中式状态存储
     │   ├── ui/                       # 5大分页、自绘流程图与主题
     │   └── bridge/                   # 文件桥接与指令校验
-    └── tests/                        # 单元与集成测试套件 (21项全通过)
+    └── tests/                        # 单元与集成测试套件 (36项全通过)
 ```
 
 ---
