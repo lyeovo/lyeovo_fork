@@ -87,9 +87,9 @@ def test_mission_new_cycle_clears_completed_highlights():
     sm.completed_nodes.add("ROBOT_PLACING")
     assert len(sm.completed_nodes) > 0
 
-    # 从 MISSION_COMPLETE 推进进入新循环 -> 回到 SYS_START，高亮应全部清空
+    # 从 MISSION_COMPLETE 推进进入新循环 -> 回到检测目标位置 VISION_CHECK_1，高亮应全部清空且无需重置机械臂
     next_node = sm.advance()
-    assert next_node.node_id == "SYS_START"
+    assert next_node.node_id == "VISION_CHECK_1"
     assert len(sm.completed_nodes) == 0
     assert not sm.is_completed("MISSION_COMPLETE")
     assert not sm.is_completed("ROBOT_PLACING")
