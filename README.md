@@ -217,14 +217,22 @@ cd F:\Grade3\study\D405+UI\SpaceSnakeVisionUI
 - 进入 **VISION** 页面即可看到实时的 D405 高清视频流与靶标检测框。
 
 #### 步骤 2：启动 MATLAB 算法监听循环
-打开 MATLAB，在命令行窗口输入以下标准脚本：
+
+##### 方式 A：一键快速启动（强烈推荐）
+打开 MATLAB，在命令行窗口直接执行预置的联调驱动脚本：
 ```matlab
-% 1. 进入机械臂运动规划算法仓库
+run('F:\Grade3\study\D405+UI\SpaceSnakeVisionUI\scripts\connect_ui_matlab.m')
+```
+
+##### 方式 B：手动分步启动
+如果需要自定义参数或手动逐行执行，请在 MATLAB 命令行窗口运行：
+```matlab
+% 1. 进入机械臂运动规划算法仓库并添加仿真模型库
 cd('F:\Grade3\study\Hyper-Redundant-Snake-Robot-Manipulator-Algorithm-main');
 addpath(fullfile(pwd, 'ArmSimulator2D'));
 
-% 2. 创建 6 自由度蛇形臂几何动力学模型
-model = createArmModel();
+% 2. 创建 6 自由度蛇形臂几何动力学模型（【关键】必须显式传参 N=6，默认模型为 4 自由度）
+model = createArmModel(struct('N', 6));
 
 % 3. 配置与 UI 的通信信箱及慢放回放参数
 opts = struct();
@@ -232,11 +240,18 @@ opts.outbox = 'F:/Grade3/study/D405+UI/SpaceSnakeVisionUI/data/outbox';
 opts.inbox  = 'F:/Grade3/study/D405+UI/SpaceSnakeVisionUI/data/inbox';
 opts.poll_interval  = 0.2;   % 轮询间隔(秒)
 opts.playback_delay = 0.04;  % 轨迹慢放回放延时(秒)，25 FPS 丝滑展现
+opts.method         = 'auto'; % 自动选择最优规划器
 opts.verbose        = true;
 
 % 4. 启动任务监听与执行循环
 runTaskLoop(model, opts);
 ```
+
+> [!NOTE]
+> **关于运行 `runTaskLoop` 后的“Busy 状态”说明**：
+> `runTaskLoop` 本身是一个**常驻事件监听循环 (Event Loop)**。启动后控制台会打印就绪横幅，此时 MATLAB 窗口右下角会显示 `Busy`，命令行不会返回 `>>` 提示符，**这属于完全正常的待命状态，绝非程序卡死**。  
+> 此时直接在 Python UI 界面上点击“启动机械臂”或任意控制按钮，MATLAB 就会毫秒级感知到任务文件并立即输出规划执行轨迹！随时按键盘快捷键 `Ctrl + C` 即可随时安全退出监听。
+
 
 #### 步骤 3：下达任务与全自动闭环
 1. 在 UI **MISSION** 页面点击“启动机械臂”，MATLAB 自动执行 `reset`，机械臂平滑展开；
