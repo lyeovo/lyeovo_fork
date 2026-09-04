@@ -11,6 +11,17 @@ def ensure_data_dirs(root: Path) -> None:
     for rel in ("data/outbox", "data/inbox", "data/logs", "data/recordings", "data/samples"):
         (root / rel).mkdir(parents=True, exist_ok=True)
 
+    # 启动时清空 outbox/inbox 中的残留指令与状态文件，避免控制端重复执行旧指令
+    for clean_dir in ("data/outbox", "data/inbox"):
+        d = root / clean_dir
+        removed = 0
+        for f in d.iterdir():
+            if f.is_file() and f.suffix in (".json", ".done", ".bad"):
+                f.unlink()
+                removed += 1
+        if removed:
+            print(f"[CLEANUP] 已清理 {clean_dir}/ 中 {removed} 个历史残留文件")
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="SpaceSnakeVisionUI")

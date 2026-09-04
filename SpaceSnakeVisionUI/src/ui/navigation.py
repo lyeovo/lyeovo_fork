@@ -19,6 +19,7 @@ class NavigationWidget(QWidget):
         ("VISION", "👁\nVISION", "视觉感知与6DoF精密测量"),
         ("TASK", "🎯\nTASK", "任务发布与地图选点操纵"),
         ("CONTROL", "🦾\nCONTROL", "机械臂位姿拓扑与关节状态"),
+        ("COMPONENTS", "🧩\nCOMPS", "机构几何与舵机详细参数"),
         ("SYSTEM", "🖥\nSYSTEM", "系统诊断与健康状态监控"),
     ]
 

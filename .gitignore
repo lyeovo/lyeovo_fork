@@ -35,3 +35,8 @@ D405_MarkerVision/
 
 # Agent local rules
 .agents/
+
+# Pytest temporary outputs
+.pytest_temp/
+**/.pytest_temp/
+

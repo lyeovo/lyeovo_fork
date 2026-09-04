@@ -15,7 +15,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..bridge.command_builder import build_estop_command, build_task_command
+from ..bridge.command_builder import (
+    build_estop_command,
+    build_task_command,
+    camera_to_base_pose,
+)
 from ..bridge.command_validator import validate_command
 from ..bridge.vision_state_publisher import VisionStatePublisher
 from ..mission.state_machine import MissionStateMachine, ROBOT_WAIT_NODES
@@ -25,6 +29,7 @@ from ..utils.image_utils import cv_bgr_to_qpixmap
 from ..vision.pipeline import VisionPipeline
 from .log_console import LogConsoleWidget
 from .navigation import NavigationWidget
+from .pages.components_page import ComponentsPage
 from .pages.control_page import ControlPage
 from .pages.mission_page import MissionPage
 from .pages.system_page import SystemPage
@@ -148,6 +153,15 @@ class MainWindow(QMainWindow):
 
         self.log.log("Mission Control HMI initialized successfully.")
 
+    def closeEvent(self, event) -> None:
+        """窗口关闭时优雅停止后台视觉工作线程和轮询定时器"""
+        if hasattr(self, "timer") and self.timer.isActive():
+            self.timer.stop()
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.stop()
+            self.worker.wait(1200)
+        super().closeEvent(event)
+
     def _build_ui(self) -> None:
         central = QWidget()
         self.setCentralWidget(central)
@@ -193,13 +207,18 @@ class MainWindow(QMainWindow):
         self.page_task.estopRequested.connect(self.emergency_stop)
         self.page_task.cancelRequested.connect(self.cancel_task)
         self.page_task.mission_map.coordinateSelected.connect(self.on_map_coordinate_selected)
+        self.page_task.mission_map.targetSelected.connect(self.select_target)
         self.stack.addWidget(self.page_task)
 
         # Page 3: 【CONTROL】运动控制
         self.page_control = ControlPage(self)
         self.stack.addWidget(self.page_control)
 
-        # Page 4: 【SYSTEM】系统监控
+        # Page 4: 【COMPONENTS】机构与舵机详细参数
+        self.page_components = ComponentsPage(self)
+        self.stack.addWidget(self.page_components)
+
+        # Page 5: 【SYSTEM】系统监控
         self.page_system = SystemPage(self.log, self)
         self.stack.addWidget(self.page_system)
 
@@ -289,13 +308,31 @@ class MainWindow(QMainWindow):
         self.selected_id = target_id
         obj = self._selected_obj()
         if obj:
+            # 1. 立即执行手眼坐标变换：将末端相机的局部相对观测转换为基座世界真实物理坐标
+            joint_angles = list(self.store.state.joint_angles) if hasattr(self.store.state, "joint_angles") and self.store.state.joint_angles else None
+            if getattr(obj, "pose_camera", None) is not None and obj.pose_camera.position.z > 0.01:
+                obj.pose_base = camera_to_base_pose(obj.pose_camera, joint_angles)
+                wx = obj.pose_base.position.x
+                wy = obj.pose_base.position.y
+                wz = obj.pose_base.position.z
+                az_deg = math.degrees(math.atan2(wx, max(1e-6, wy)))
+                r_dist = math.hypot(wx, wy)
+                self.log.log(
+                    f"[VISION-FK] 目标 {obj.target_id} 空间物理坐标转换完成: X={wx:+.3f}m, Y={wy:+.3f}m, Z={wz:+.3f}m (基座系, 方位角 AZ:{az_deg:+.1f}°, 极距:{r_dist:.2f}m)"
+                )
+                # 自动将解算出的物理坐标预填至任务面板与俯视地图高亮航点
+                self.page_task.command_panel.set_target_coordinate(wx, wy)
+                self.page_task.mission_map.set_waypoint(wx, wy)
+            else:
+                self.log.log(f"[VISION] 目标锁定: {obj.target_id} ({obj.class_name}) [BEARING ONLY: 深度待恢复]")
+
             self.selected_target_snapshot = copy.deepcopy(obj)
             self.selected_target_locked_at = time.time()
             self.selected_target_last_seen_at = obj.timestamp
             self._sync_vision_to_store(obj)
-            self.log.log(f"[VISION] Target locked: {obj.target_id} ({obj.class_name})")
 
         self.page_task.mission_map.update_map(self.objects, self.selected_id)
+
 
     def select_by_pixel(self, x: int, y: int) -> None:
         for obj in self.objects:
@@ -519,11 +556,18 @@ class MainWindow(QMainWindow):
             kwargs["state"] = rob.state
 
         joints = getattr(rob, "joint_positions", None)
-        if joints and isinstance(joints, list) and len(joints) >= 6:
-            vals = list(joints[:6])
-            if str(getattr(rob, "joint_positions_unit", "deg")).lower() == "rad":
+        if joints and isinstance(joints, (list, tuple)) and len(joints) >= 1:
+            vals = [float(v) for v in joints]
+            unit = str(getattr(rob, "joint_positions_unit", "deg")).strip().lower()
+            unit_specified = getattr(rob, "_unit_specified", True)
+            # 单位判定：若明确标注 rad，或未显式声明单位但数值非零且在 [-3.2, 3.2] 弧度范围内，按弧度转为度
+            is_rad = (unit == "rad") or (not unit_specified and any(abs(v) > 1e-4 for v in vals) and all(abs(v) <= 3.2 for v in vals))
+            if is_rad:
                 vals = [math.degrees(v) for v in vals]
-            kwargs["joint_angles_deg"] = vals
+            # 补齐至至少 6 关节以便 UI 渲染，保留所有真实关节数据
+            if len(vals) < 6:
+                vals = vals + [0.0] * (6 - len(vals))
+            kwargs["joint_angles_deg"] = [round(v, 2) for v in vals]
 
         ee = getattr(rob, "end_effector_pose_base", None)
         if ee is not None:
@@ -578,9 +622,3 @@ class MainWindow(QMainWindow):
         if self.selected_target_snapshot and self.selected_id == self.selected_target_snapshot.target_id:
             return self.selected_target_snapshot
         return None
-
-    def closeEvent(self, event) -> None:
-        if hasattr(self, "worker") and self.worker.isRunning():
-            self.worker.stop()
-            self.worker.wait(1000)
-        event.accept()

@@ -30,6 +30,13 @@ class TaskPage(QWidget):
         super().__init__(parent)
         self.store = SystemStateStore.instance()
         self._build_ui()
+        # 订阅状态变更，将关节角度实时同步到俯视地图
+        self.store.stateChanged.connect(self.on_state_updated)
+
+    def on_state_updated(self, state: SystemState) -> None:
+        """状态变更时更新俯视地图上的机械臂姿态"""
+        rob = state.robot
+        self.mission_map.set_joint_angles(rob.joint_angles_deg, rob.gripper_state)
 
     def _build_ui(self) -> None:
         layout = QHBoxLayout(self)

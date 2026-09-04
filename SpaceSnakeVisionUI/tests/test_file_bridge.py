@@ -54,3 +54,44 @@ def test_poll_status_rereads_in_place_overwrite(tmp_path):
 
     # 覆盖后内容稳定：不再重复投递
     assert bridge.poll_status() == []
+
+
+def test_matlab_radians_and_joint_padding():
+    """验证从 MATLAB 回传的 TaskStatus JSON（未声明单位、4 个弧度关节角）能够被正确解析"""
+    import json
+    import math
+
+    matlab_status_dict = {
+        "schema_version": "1.0",
+        "command_id": "CMD-MATLAB-001",
+        "timestamp": 123456.78,
+        "status": "COMPLETED",
+        "current_step": "move_to",
+        "progress": 1.0,
+        "message": "任务完成",
+        "robot_state": {
+            "state": "IDLE",
+            "end_effector_pose_base": [],
+            "joint_positions": [0.5, -0.8, 1.2, -0.3],  # MATLAB 4 个弧度角
+            "message": "normal"
+        }
+    }
+    ts = TaskStatus.from_dict(matlab_status_dict)
+    rob = ts.robot_state
+    assert rob._unit_specified is False
+    assert len(rob.joint_positions) == 4
+
+    # 模拟 MainWindow._apply_robot_state 解析逻辑
+    vals = [float(v) for v in rob.joint_positions]
+    unit = str(getattr(rob, "joint_positions_unit", "deg")).strip().lower()
+    unit_specified = getattr(rob, "_unit_specified", True)
+    is_rad = (unit == "rad") or (not unit_specified and any(abs(v) > 1e-4 for v in vals) and all(abs(v) <= 3.2 for v in vals))
+    assert is_rad is True
+
+    deg_vals = [math.degrees(v) for v in vals]
+    if len(deg_vals) < 6:
+        deg_vals = deg_vals + [0.0] * (6 - len(deg_vals))
+    assert len(deg_vals) == 6
+    assert abs(deg_vals[0] - math.degrees(0.5)) < 1e-3
+    assert abs(deg_vals[1] - math.degrees(-0.8)) < 1e-3
+    assert abs(deg_vals[4] - 0.0) < 1e-3

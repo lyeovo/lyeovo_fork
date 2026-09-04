@@ -68,10 +68,47 @@ def build_estop_command() -> TaskCommand:
     )
 
 
+def camera_to_base_pose(
+    pose_camera: Pose3D,
+    joint_angles_deg: Optional[list] = None,
+    seg_len_m: float = 1.04393,
+    n_segments: int = 6,
+) -> Pose3D:
+    """根据机械臂顺向运动学 (FK) 将末端相机的局部相对位姿转换为空间基座绝对物理位姿"""
+    import math
+    from ..models import Euler, Vector3
+
+    angles = joint_angles_deg or [0.0] * n_segments
+    cur_x, cur_y = 0.0, 0.0
+    accum_angle = math.pi / 2.0  # 初始垂直向上 (+Y 轴)
+    for idx in range(n_segments):
+        deg = angles[idx] if idx < len(angles) else 0.0
+        accum_angle += math.radians(deg)
+        cur_x += seg_len_m * math.cos(accum_angle)
+        cur_y += seg_len_m * math.sin(accum_angle)
+
+    cam_x = pose_camera.position.x
+    cam_z = pose_camera.position.z
+    # 前向深度沿 accum_angle，横偏沿右侧法向
+    world_x = cur_x + cam_z * math.cos(accum_angle) + cam_x * math.sin(accum_angle)
+    world_y = cur_y + cam_z * math.sin(accum_angle) - cam_x * math.cos(accum_angle)
+    return Pose3D(
+        frame_id="robot_base",
+        position=Vector3(x=round(world_x, 4), y=round(world_y, 4), z=round(pose_camera.position.y, 4)),
+        orientation_euler=Euler(roll=0.0, pitch=0.0, yaw=round(accum_angle, 4)),
+    )
+
+
 def _target_summary(obj, locked_at: Optional[float] = None) -> Dict[str, Any]:
     now = time.time()
     quality = getattr(obj, "quality", {}) or {}
-    pose_available = bool(quality.get("pose_available", obj.status == "POSE_6DOF"))
+    pose_available = getattr(obj, "pose_camera", None) is not None
+
+    pose_base = obj.pose_base.to_dict() if getattr(obj, "pose_base", None) else None
+    if pose_base is None and pose_available and obj.pose_camera.position.z > 0.02:
+        pb_obj = camera_to_base_pose(obj.pose_camera)
+        pose_base = pb_obj.to_dict()
+
     return {
         "target_id": obj.target_id,
         "class_name": obj.class_name,
@@ -87,7 +124,7 @@ def _target_summary(obj, locked_at: Optional[float] = None) -> Dict[str, Any]:
         "center_pixel": obj.center_pixel,
         "depth_m": obj.depth_m,
         "status": obj.status,
-        "frame_id": obj.pose_camera.frame_id,
+        "frame_id": obj.pose_camera.frame_id if pose_available else "camera_left",
         "bearing": getattr(obj, "bearing", None) or quality.get("bearing") or quality.get("last_seen_bearing"),
         "quality": {
             "num_dots": quality.get("num_dots"),
@@ -98,8 +135,9 @@ def _target_summary(obj, locked_at: Optional[float] = None) -> Dict[str, Any]:
             "pose_rmse_m": quality.get("pose_rmse_m"),
         },
         "pose_camera": obj.pose_camera.to_dict() if pose_available else None,
-        "pose_base": obj.pose_base.to_dict() if obj.pose_base else None,
+        "pose_base": pose_base,
     }
+
 
 
 def _safety_summary(

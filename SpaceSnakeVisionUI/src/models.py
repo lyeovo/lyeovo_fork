@@ -116,11 +116,14 @@ class RobotState:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RobotState":
-        data = _pick_fields(cls, data)
-        ee = data.get("end_effector_pose_base")
+        unit_specified = "joint_positions_unit" in data and bool(data["joint_positions_unit"])
+        picked = _pick_fields(cls, data)
+        ee = picked.get("end_effector_pose_base")
         # MATLAB jsonencode 会把空位姿写成 []；仅在拿到真正的 dict 时解析
-        data["end_effector_pose_base"] = Pose3D.from_dict(ee) if isinstance(ee, dict) else None
-        return cls(**data)
+        picked["end_effector_pose_base"] = Pose3D.from_dict(ee) if isinstance(ee, dict) else None
+        instance = cls(**picked)
+        setattr(instance, "_unit_specified", unit_specified)
+        return instance
 
 
 @dataclass
