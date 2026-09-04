@@ -45,9 +45,7 @@ class MissionStatusBar(QWidget):
 
         top_row.addStretch()
 
-        self.subsystems_lbl = QLabel(
-            "CAMERA: ● ONLINE  |  VISION: ● RUNNING  |  CONTROL: ● READY  |  dSPACE: ● ONLINE  |  E-STOP: [ SAFE ]"
-        )
+        self.subsystems_lbl = QLabel("INITIALIZING SUBSYSTEMS…")
         self.subsystems_lbl.setObjectName("SubsystemsStatus")
         top_row.addWidget(self.subsystems_lbl)
 
@@ -85,6 +83,13 @@ class MissionStatusBar(QWidget):
 
         main_layout.addLayout(bot_row)
 
+        # 变更追踪，避免每次 stateChanged 都重复 setStyleSheet
+        self._last_state_text: Optional[str] = None
+        self._last_state_danger: Optional[bool] = None
+
+        # 用当前状态初始化 header，避免首帧显示占位/假数据
+        self.on_state_updated(self.store.state)
+
     def _update_clock(self) -> None:
         utc_str = time.strftime("%H:%M:%S UTC", time.gmtime())
         self.clock_lbl.setText(utc_str)
@@ -98,14 +103,34 @@ class MissionStatusBar(QWidget):
         self.progress_bar.setValue(pct)
 
         h = state.health
+        r = state.robot
         estop_str = "[ ESTOP! ]" if h.estop_active else "[ SAFE ]"
         cam_str = "● ONLINE" if h.camera_online else "○ OFFLINE"
         vis_str = f"● {state.vision.detector_status}"
-        ctl_str = "● ACTIVE" if state.command.control_status == "EXECUTING" else "● READY"
+
+        if h.estop_active:
+            ctl_str = "● ESTOP"
+        elif not h.control_online:
+            ctl_str = "○ OFFLINE"
+        elif state.command.control_status in ("ACCEPTED", "PLANNING", "EXECUTING"):
+            ctl_str = f"● {state.command.control_status}"
+        else:
+            ctl_str = "● READY"
+
+        ds_str = "● ONLINE" if h.dspace_connected else "◐ STANDBY"
+        rtt_str = f"{h.bridge_rtt_ms:.0f} ms" if h.bridge_rtt_ms is not None else "—"
 
         self.subsystems_lbl.setText(
-            f"CAMERA: {cam_str}  |  VISION: {vis_str}  |  CONTROL: {ctl_str}  |  E-STOP: {estop_str}"
+            f"CAMERA: {cam_str}  |  VISION: {vis_str}  |  CONTROL: {ctl_str}  |  "
+            f"dSPACE: {ds_str}  |  RTT: {rtt_str}  |  E-STOP: {estop_str}"
         )
+
+        danger = bool(h.estop_active or r.state in ("ESTOP", "ESTOP_TRIGGERED"))
+        state_text = f"Bridge: {h.bridge_mode} MODE | Robot: {r.state}"
+        if state_text != self._last_state_text or danger != self._last_state_danger:
+            self.set_state(state_text, danger)
+            self._last_state_text = state_text
+            self._last_state_danger = danger
 
     def set_state(self, text: str, danger: bool = False) -> None:
         self.state.setText(text)

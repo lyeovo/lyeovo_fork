@@ -159,14 +159,7 @@ class ControlPage(QWidget):
         pb_title.setObjectName("SubheaderLabel")
         pb_layout.addWidget(pb_title)
 
-        self.planner_info = QLabel(
-            "Planner Algorithm:  AUTO (RRT* / CVAE / Momentum)\n"
-            "IK Solving Time:    24.5 ms\n"
-            "Tracking Error:     1.8 mm\n"
-            "Execution State:    COMPLETED\n"
-            "dSPACE Controller:  CONNECTED (TCP 50Hz)\n"
-            "Gripper Payload:    HOLDING (Normal Force 12.5 N)"
-        )
+        self.planner_info = QLabel("Awaiting control telemetry…")
         self.planner_info.setObjectName("TelemetryLabel")
         pb_layout.addWidget(self.planner_info)
         rp_layout.addWidget(planner_box)
@@ -176,6 +169,34 @@ class ControlPage(QWidget):
         splitter.setStretchFactor(1, 3)
         layout.addWidget(splitter)
 
+        # 用当前状态初始化关节条与规划器信息，避免首帧显示占位/假数据
+        self.on_state_updated(self.store.state)
+
+    def _build_planner_text(self, state: SystemState) -> str:
+        c = state.command
+        r = state.robot
+        h = state.health
+
+        prog = f"{(c.progress or 0.0) * 100.0:.0f}%"
+        solve = f"{r.solve_time_ms:.1f} ms" if r.solve_time_ms is not None else "—"
+        track = f"{r.tracking_error_mm:.2f} mm" if r.tracking_error_mm is not None else "—"
+        angle = f"{r.angle_error_deg:.2f}°" if r.angle_error_deg is not None else "—"
+        dspace = "CONNECTED (TCP)" if h.dspace_connected else "STANDBY (TCP reserved)"
+        ee = f"x={r.ee_x:+.3f}  y={r.ee_y:+.3f}  θ={r.ee_yaw:+.1f}°"
+
+        return (
+            f"Execution State:    {c.control_status}\n"
+            f"Active Command:     {c.command_type or '--'}\n"
+            f"Progress:           {prog}\n"
+            f"Planner Method:     {r.method_used}\n"
+            f"IK Solve Time:      {solve}\n"
+            f"Tracking Error:     {track}\n"
+            f"Angle Error:        {angle}\n"
+            f"EE Pose (base):     {ee}\n"
+            f"dSPACE Controller:  {dspace}\n"
+            f"Gripper:            {r.gripper_state}"
+        )
+
     def on_state_updated(self, state: SystemState) -> None:
         angles = state.robot.joint_angles_deg or [0.0] * 6
         self.robot_view.set_joint_angles(angles)
@@ -183,3 +204,4 @@ class ControlPage(QWidget):
             if i < len(self.joint_labels):
                 self.joint_labels[i].setText(f"Joint {i+1}: {val:+.1f}°")
                 self.joint_bars[i].setValue(int(val))
+        self.planner_info.setText(self._build_planner_text(state))
