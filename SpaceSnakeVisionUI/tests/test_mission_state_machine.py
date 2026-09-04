@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.mission.state_machine import MissionState, MissionStateMachine
+from src.mission.state_machine import MissionState, MissionStateMachine, ROBOT_WAIT_NODES
 from src.mission.workflow_definition import WORKFLOW_NODES
 from src.state.system_state import SystemStateStore
 
@@ -72,3 +72,55 @@ def test_mission_state_machine_reset_and_jump():
     sm.reset()
     assert sm.current_node_id == "SYS_START"
     assert len(sm.completed_nodes) == 0
+
+
+def test_advance_if_hint_matches_and_advances():
+    store = SystemStateStore()
+    sm = MissionStateMachine(store)
+
+    # ROBOT_START 的 command_hint 是 reset
+    sm.jump_to("ROBOT_START")
+    assert sm.advance_if_hint("reset") is True
+    assert sm.current_node_id == "VISION_CHECK_1"
+
+
+def test_advance_if_hint_no_match_keeps_node():
+    store = SystemStateStore()
+    sm = MissionStateMachine(store)
+
+    sm.jump_to("COARSE_MAP_SELECT")  # hint = move_to
+    # 不匹配的指令不推进
+    assert sm.advance_if_hint("pick") is False
+    assert sm.current_node_id == "COARSE_MAP_SELECT"
+    # emergency_stop / cancel_task 无对应 hint，自然跳过
+    assert sm.advance_if_hint("emergency_stop") is False
+    assert sm.advance_if_hint("cancel_task") is False
+    assert sm.current_node_id == "COARSE_MAP_SELECT"
+    # 匹配则推进到 COARSE_MOVING
+    assert sm.advance_if_hint("move_to") is True
+    assert sm.current_node_id == "COARSE_MOVING"
+
+
+def test_advance_if_hint_on_node_without_hint():
+    store = SystemStateStore()
+    sm = MissionStateMachine(store)
+
+    # ROBOT 等待节点无 command_hint，发布即推进不应命中
+    sm.jump_to("COARSE_MOVING")
+    assert sm.advance_if_hint("move_to") is False
+    assert sm.current_node_id == "COARSE_MOVING"
+
+
+def test_robot_wait_nodes_membership():
+    # 完成即推进集合应恰好是 5 个 ROBOT 等待节点
+    assert ROBOT_WAIT_NODES == {
+        "COARSE_MOVING",
+        "TARGET_REACHED",
+        "ROBOT_PICKING",
+        "REACH_DESTINATION",
+        "ROBOT_PLACING",
+    }
+    # OPERATOR 命令节点不在其中（它们靠“发布即推进”）
+    assert "ROBOT_START" not in ROBOT_WAIT_NODES
+    assert "COARSE_MAP_SELECT" not in ROBOT_WAIT_NODES
+    assert "OPERATOR_PICK_CMD" not in ROBOT_WAIT_NODES
