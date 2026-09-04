@@ -4,6 +4,20 @@
 
 ---
 
+## 📑 快速导航：您应该看哪个文档？
+
+为了避免文档混乱，整个仓库已将所有陈旧/冗余草稿彻底清理，规范整理为以下 **3 份核心权威文档**，请根据您的角色对号入座：
+
+| 您的角色 / 当前任务 | 对应必看文档 | 文档路径 | 核心解决的问题 |
+| :--- | :--- | :--- | :--- |
+| 🧑‍💻 **项目主开发者 / 汇报演示人员** | **项目总控台使用与架构总览** | 📌 [README.md](./README.md)（即本文件） | 系统全景、5 大分页功能、SVG 流程图状态机、两级视觉原理、环境运行命令 |
+| 🤖 **运动控制端 / MATLAB 联调同学** | **全任务控制接口技术规范 (v2.0)** | 📘 [TASK_COMMAND_INTERFACE.md](./SpaceSnakeVisionUI/docs/TASK_COMMAND_INTERFACE.md) | 10 类指令 JSON 格式、控制端状态回传格式、SHA1去重覆盖机制、TCP 实时流预留 |
+| 🤝 **跨团队交接人员 / 外部运行测试** | **独立交付版本开箱指南** | 📦 [D405_MarkerVision/README.md](./D405_MarkerVision/README.md) | 独立交接包目录结构、开箱启动命令、3类靶标最新权重与离线算法说明 |
+
+> 💡 **补充参考**：底层算法库详情见 [`snake_vision_d405_target/README.md`](./snake_vision_d405_target/README.md)；UI 模块代码结构见 [`SpaceSnakeVisionUI/README.md`](./SpaceSnakeVisionUI/README.md)。
+
+---
+
 ## 一、系统架构与设计理念
 
 ```text
