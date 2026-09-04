@@ -151,8 +151,8 @@ WORKFLOW_NODES: List[WorkflowNode] = [
         index=16,
         title="任务完成进入新循环",
         category="COMPLETE",
-        description="任务完成，记录归档并进入下一个物体循环",
-        next_node_id="SYS_START",
+        description="任务完成，直接回到检测目标位置开始下一个物体循环",
+        next_node_id="VISION_CHECK_1",
     ),
 ]
 

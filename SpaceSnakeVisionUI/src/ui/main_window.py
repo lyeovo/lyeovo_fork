@@ -354,12 +354,12 @@ class MainWindow(QMainWindow):
             self.publish_command()
 
         elif nid == "MISSION_COMPLETE":
-            # 任务完成，点击进入新工件循环：清空上周期目标锁定与各步骤高亮，回到起点
+            # 任务完成，点击进入新工件循环：清空上周期目标锁定与各步骤高亮，直接回到检测目标位置 VISION_CHECK_1
             self.selected_id = None
             self.selected_target_snapshot = None
             self.store.update_vision(selected_target_id=None)
             next_node = self.state_machine.advance()
-            self.log.log(f"[MISSION] 进入新工件循环，已清空上周期完成高亮与目标锁定，回到 [{next_node.index:02d}] {next_node.title}。")
+            self.log.log(f"[MISSION] 一个循环结束，已清空步骤高亮，直接回到检测目标位置 [{next_node.index:02d}] {next_node.title}，无需重新启动机械臂。")
 
         else:
             # 非命令节点（SYS_START / ROBOT 等待）：手动推进
