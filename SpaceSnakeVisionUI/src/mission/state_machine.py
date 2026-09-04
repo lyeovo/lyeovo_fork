@@ -7,6 +7,10 @@ from .workflow_definition import NODE_MAP, WORKFLOW_NODES, WorkflowNode
 from ..state.system_state import SystemStateStore
 
 
+# 等待物理完成的 ROBOT 节点：活跃命令回 COMPLETED 时应自动推进（完成即推进）
+ROBOT_WAIT_NODES = {node.node_id for node in WORKFLOW_NODES if node.category == "ROBOT"}
+
+
 class MissionState:
     SYS_START = "SYS_START"
     ROBOT_START = "ROBOT_START"
@@ -60,6 +64,18 @@ class MissionStateMachine(QObject):
         self._sync_to_store()
         self.nodeChanged.emit(self.current_node_id)
         return self.current_node
+
+    def advance_if_hint(self, command_type: str) -> bool:
+        """发布即推进：发布的命令与当前节点的 command_hint 匹配时推进。
+
+        覆盖 reset/move_to/move_for_pick/pick/move_for_place/place；
+        emergency_stop/cancel_task 无对应 hint，自然跳过。
+        """
+        cur = self.current_node
+        if cur.command_hint and cur.command_hint == command_type:
+            self.advance()
+            return True
+        return False
 
     def jump_to(self, node_id: str) -> bool:
         """跳转到特定节点"""

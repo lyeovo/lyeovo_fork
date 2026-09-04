@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import math
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -17,7 +18,7 @@ from PySide6.QtWidgets import (
 from ..bridge.command_builder import build_estop_command, build_task_command
 from ..bridge.command_validator import validate_command
 from ..bridge.vision_state_publisher import VisionStatePublisher
-from ..mission.state_machine import MissionStateMachine
+from ..mission.state_machine import MissionStateMachine, ROBOT_WAIT_NODES
 from ..models import TaskCommand
 from ..state.system_state import SystemStateStore
 from ..utils.image_utils import cv_bgr_to_qpixmap
@@ -116,6 +117,12 @@ class MainWindow(QMainWindow):
         self.last_robot_status = "IDLE"
         self.last_status_message = ""
 
+        # 反馈闭环度量：发布时刻（RTT）、FPS 滚动统计
+        self._publish_ts: Dict[str, float] = {}
+        self._rtt_done: set = set()
+        self._fps_frames: int = 0
+        self._fps_last: float = time.time()
+
         # 窗口基本属性
         self.setWindowTitle("ORBITAL SNAKE ROBOT MISSION CONTROL · 任务总控台")
         self.resize(1360, 840)
@@ -207,6 +214,19 @@ class MainWindow(QMainWindow):
     def on_frame(self, image, objects) -> None:
         self.objects = list(objects)
         self.current_frame = image.copy()
+
+        # 实测视觉流水线 FPS（每秒刷新一次）
+        self._fps_frames += 1
+        now = time.time()
+        elapsed = now - self._fps_last
+        if elapsed >= 1.0:
+            self.store.update_vision(fps=round(self._fps_frames / elapsed, 1))
+            self._fps_frames = 0
+            self._fps_last = now
+
+        # 有帧到达即视为相机在线（仅在掉线后恢复时更新，避免逐帧广播）
+        if not self.store.state.health.camera_online:
+            self.store.update_health(camera_online=True)
 
         # 在画面上绘制选框与准星
         VisionPipeline.redraw_selection(image, self.objects, self.selected_id)
@@ -300,10 +320,9 @@ class MainWindow(QMainWindow):
             self.log.log("[MISSION] Operator starting robot (Homing/Reset)...")
             self.generate_command("reset", {})
             self.publish_command()
-            self.state_machine.advance()
 
         elif nid == "COARSE_MAP_SELECT":
-            # 切换到 TaskPage 让操作员在 Map 上点选
+            # 切换到 TaskPage 让操作员在 Map 上点选，发布 move_to 后自动推进
             self.stack.setCurrentIndex(2)
             self.navigation.set_current_page(2)
             self.log.log("[MISSION] Please click waypoint on Map in TASK page, then generate & publish move_to.")
@@ -315,28 +334,24 @@ class MainWindow(QMainWindow):
             self.log.log(f"[MISSION] Publishing move_for_pick for target: {self.selected_id}")
             self.generate_command("move_for_pick", {})
             self.publish_command()
-            self.state_machine.advance()
 
         elif nid == "OPERATOR_PICK_CMD":
             self.log.log("[MISSION] Operator triggering pick command...")
             self.generate_command("pick", {})
             self.publish_command()
-            self.state_machine.advance()
 
         elif nid == "OPERATOR_PLACE_TASK":
             self.log.log("[MISSION] Publishing move_for_place...")
-            self.generate_command("move_for_place", {"destination": "Assembly_Port_A"})
+            self.generate_command("move_for_place", {"destination": "Goal_Zone"})
             self.publish_command()
-            self.state_machine.advance()
 
         elif nid == "OPERATOR_PLACE_CMD":
             self.log.log("[MISSION] Operator triggering place command...")
             self.generate_command("place", {})
             self.publish_command()
-            self.state_machine.advance()
 
         else:
-            # 常规推进
+            # 非命令节点（SYS_START / ROBOT 等待 / COMPLETE）：手动推进
             next_node = self.state_machine.advance()
             self.log.log(f"[MISSION] Advanced to stage: [{next_node.index:02d}] {next_node.title}")
 
@@ -392,6 +407,7 @@ class MainWindow(QMainWindow):
 
         cmd = self.pending_command
         self.active_command_id = cmd.command_id
+        self._publish_ts[cmd.command_id] = time.time()
         path = self.bridge.publish_command(cmd)
 
         self.store.update_command(
@@ -404,6 +420,13 @@ class MainWindow(QMainWindow):
 
         self.page_task.task_list.add_task(cmd, publish_ref=str(path.name))
         self.log.log(f"[COMMAND] Published {cmd.command_id} to {path.name}")
+
+        # 发布即推进：命令命中当前节点 hint 且通过安全校验时推进流程
+        if cmd.safety.get("allow_execute", False):
+            if self.state_machine.advance_if_hint(cmd.command_type):
+                self.log.log(f"[MISSION] Auto-advanced on publishing '{cmd.command_type}'.")
+        else:
+            self.log.log(f"[COMMAND] '{cmd.command_type}' 未通过安全校验，流程保持当前节点。")
 
     def emergency_stop(self) -> None:
         self.estop_active = True
@@ -429,14 +452,23 @@ class MainWindow(QMainWindow):
 
     # ---------------- 状态轮询 ----------------
     def poll_status(self) -> None:
-        status = self.bridge.poll_status()
-        if not status:
+        statuses = self.bridge.poll_status()
+        if not statuses:
+            self._update_control_freshness()
             return
+        for status in statuses:
+            self._consume_status(status)
 
+    def _consume_status(self, status) -> None:
+        now = time.time()
         cid = status.command_id
         st = status.status
-        prog = status.progress
-        msg = status.message
+
+        # RTT：发布命令后收到该命令的首个状态回传时实测一次
+        if cid in self._publish_ts and cid not in self._rtt_done:
+            rtt = max(0.0, (now - self._publish_ts[cid]) * 1000.0)
+            self.store.update_health(bridge_rtt_ms=rtt)
+            self._rtt_done.add(cid)
 
         self.robot_busy = st in ("ACCEPTED", "PLANNING", "EXECUTING")
         self.last_robot_status = st
@@ -445,24 +477,79 @@ class MainWindow(QMainWindow):
             command_id=cid,
             command_type=status.current_step or "--",
             control_status=st,
-            progress=prog,
-            message=msg,
+            progress=status.progress,
+            message=status.message,
         )
-        self.store.update_health(robot_busy=self.robot_busy)
+        self.store.update_health(
+            robot_busy=self.robot_busy,
+            control_online=True,
+            last_status_rx=now,
+        )
 
-        # 机械臂关节与状态遥测模拟或回显
-        rob_state = getattr(status, "robot_state", None) or {}
-        joints = rob_state.get("joint_positions")
-        if joints and isinstance(joints, list) and len(joints) >= 6:
-            self.store.update_robot(joint_angles_deg=joints[:6])
+        self._apply_robot_state(status.robot_state)
+        self._apply_planner(status.planner)
 
         self.page_task.task_list.update_status(status)
 
-        # 若处于执行阶段且完成，可自动联动状态机前进
+        # 完成即推进：ROBOT 等待节点上，活跃命令 COMPLETED 时推进状态机
         if st == "COMPLETED" and cid == self.active_command_id:
-            cur = self.state_machine.current_node_id
-            if cur in ("ROBOT_START", "COARSE_MOVING", "TARGET_SELECT_PICK", "ROBOT_PICKING", "OPERATOR_PLACE_TASK", "ROBOT_PLACING"):
+            if self.state_machine.current_node_id in ROBOT_WAIT_NODES:
                 self.state_machine.advance()
+
+    def _apply_robot_state(self, rob) -> None:
+        if rob is None:
+            return
+        kwargs: Dict[str, Any] = {}
+
+        if getattr(rob, "state", None):
+            kwargs["state"] = rob.state
+
+        joints = getattr(rob, "joint_positions", None)
+        if joints and isinstance(joints, list) and len(joints) >= 6:
+            vals = list(joints[:6])
+            if str(getattr(rob, "joint_positions_unit", "deg")).lower() == "rad":
+                vals = [math.degrees(v) for v in vals]
+            kwargs["joint_angles_deg"] = vals
+
+        ee = getattr(rob, "end_effector_pose_base", None)
+        if ee is not None:
+            kwargs["ee_x"] = ee.position.x
+            kwargs["ee_y"] = ee.position.y
+            kwargs["ee_z"] = ee.position.z
+            kwargs["ee_roll"] = ee.orientation_euler.roll
+            kwargs["ee_pitch"] = ee.orientation_euler.pitch
+            kwargs["ee_yaw"] = ee.orientation_euler.yaw
+
+        gripper_map = {0: "HOLDING", 1: "OPEN", 2: "CLOSED"}
+        g = getattr(rob, "gripper", None)
+        if g in gripper_map:
+            kwargs["gripper_state"] = gripper_map[g]
+
+        if kwargs:
+            self.store.update_robot(**kwargs)
+
+    def _apply_planner(self, planner) -> None:
+        if not planner:
+            return
+        kwargs: Dict[str, Any] = {}
+        if planner.get("method_used"):
+            kwargs["method_used"] = str(planner["method_used"])
+        for key in ("solve_time_ms", "tracking_error_mm", "angle_error_deg"):
+            val = planner.get(key)
+            if val is not None:
+                kwargs[key] = val
+        if kwargs:
+            self.store.update_robot(**kwargs)
+
+    def _update_control_freshness(self) -> None:
+        h = self.store.state.health
+        if (
+            h.control_online
+            and h.last_status_rx is not None
+            and (time.time() - h.last_status_rx) > 3.0
+        ):
+            self.robot_busy = False
+            self.store.update_health(control_online=False, robot_busy=False)
 
     def _selected_obj(self):
         for obj in self.objects:

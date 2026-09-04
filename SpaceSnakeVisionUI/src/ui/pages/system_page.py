@@ -63,8 +63,8 @@ class SystemPage(QWidget):
             row = i // 3
             col = (i % 3) * 2
             name_lbl = QLabel(name)
-            status_lbl = QLabel("● ONLINE")
-            status_lbl.setObjectName("StatusOnline")
+            status_lbl = QLabel("○ IDLE")
+            status_lbl.setObjectName("StatusIdle")
             grid.addWidget(name_lbl, row, col)
             grid.addWidget(status_lbl, row, col + 1)
             self.modules.append((name, status_lbl))
@@ -74,8 +74,8 @@ class SystemPage(QWidget):
         # 性能指标
         metrics_row = QHBoxLayout()
         metrics_row.setSpacing(16)
-        self.fps_lbl = QLabel("Vision Pipeline: 30.0 FPS")
-        self.rtt_lbl = QLabel("Bridge Latency: 4.2 ms")
+        self.fps_lbl = QLabel("Vision Pipeline: 0.0 FPS")
+        self.rtt_lbl = QLabel("Bridge RTT: —")
         self.cmd_lbl = QLabel("Active Command: NONE")
         for lbl in (self.fps_lbl, self.rtt_lbl, self.cmd_lbl):
             lbl.setObjectName("TelemetryLabel")
@@ -100,6 +100,87 @@ class SystemPage(QWidget):
         splitter.setStretchFactor(1, 2)
         layout.addWidget(splitter)
 
+        # 用当前状态初始化健康灯与指标，避免首帧显示假数据
+        self.on_state_updated(self.store.state)
+
+    def _set_light(self, lbl: QLabel, level: str, text: Optional[str] = None) -> None:
+        obj_map = {
+            "online": "StatusOnline",
+            "warn": "StatusWarn",
+            "offline": "StatusOffline",
+            "idle": "StatusIdle",
+        }
+        default_text = {
+            "online": "● ONLINE",
+            "warn": "◐ WARN",
+            "offline": "○ OFFLINE",
+            "idle": "○ IDLE",
+        }
+        obj = obj_map.get(level, "StatusIdle")
+        if lbl.objectName() != obj:
+            lbl.setObjectName(obj)
+            # objectName 变更后需重新 polish，QSS 颜色才会生效
+            style = lbl.style()
+            style.unpolish(lbl)
+            style.polish(lbl)
+        lbl.setText(text if text is not None else default_text.get(level, "○ IDLE"))
+
     def on_state_updated(self, state: SystemState) -> None:
-        self.fps_lbl.setText(f"Vision Pipeline: {state.vision.fps:.1f} FPS")
-        self.cmd_lbl.setText(f"Active Command: {state.command.command_id or 'NONE'} [{state.command.control_status}]")
+        h = state.health
+        v = state.vision
+        r = state.robot
+        lights = [lbl for _, lbl in self.modules]
+
+        # 1. Intel D405 相机
+        self._set_light(lights[0], "online" if h.camera_online else "offline")
+
+        # 2. YOLO 目标检测器
+        if not h.vision_running or v.detector_status in ("ERROR", "FAULT", "OFFLINE"):
+            self._set_light(lights[1], "offline")
+        else:
+            self._set_light(lights[1], "online", text=f"● {v.detector_status}")
+
+        # 3. 白点 6DoF 位姿估计器
+        if v.pose_available:
+            self._set_light(lights[2], "online", text="● 6DoF LOCK")
+        elif v.valid_dots > 0:
+            self._set_light(lights[2], "warn", text=f"◐ {v.valid_dots}/{v.total_dots} DOT")
+        else:
+            self._set_light(lights[2], "idle", text="○ NO FIX")
+
+        # 4. 任务状态机（进程内，恒在线）
+        self._set_light(lights[3], "online", text=f"● S{state.mission.step_index}")
+
+        # 5. Outbox/Inbox 文件桥（以状态回传新鲜度为准）
+        if h.control_online:
+            self._set_light(lights[4], "online", text=f"● {h.bridge_mode}")
+        else:
+            self._set_light(lights[4], "offline", text="○ NO PEER")
+
+        # 6. MATLAB 运动规划器（控制端存活）
+        self._set_light(lights[5], "online" if h.control_online else "offline")
+
+        # 7. dSPACE 控制器链路（文件桥模式下为预留 STANDBY）
+        if h.dspace_connected:
+            self._set_light(lights[6], "online")
+        else:
+            self._set_light(lights[6], "idle", text="◐ STANDBY·TCP")
+
+        # 8. 蛇形臂关节执行器（随控制遥测新鲜度）
+        self._set_light(lights[7], "online" if h.control_online else "offline")
+
+        # 9. 夹爪微控制器
+        if h.control_online:
+            self._set_light(lights[8], "online", text=f"● {r.gripper_state}")
+        else:
+            self._set_light(lights[8], "offline")
+
+        # 性能指标
+        self.fps_lbl.setText(f"Vision Pipeline: {v.fps:.1f} FPS")
+        if h.bridge_rtt_ms is not None:
+            self.rtt_lbl.setText(f"Bridge RTT: {h.bridge_rtt_ms:.1f} ms")
+        else:
+            self.rtt_lbl.setText("Bridge RTT: —")
+        self.cmd_lbl.setText(
+            f"Active Command: {state.command.command_id or 'NONE'} [{state.command.control_status}]"
+        )

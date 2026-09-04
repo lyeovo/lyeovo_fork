@@ -8,7 +8,7 @@ from .app import create_main_window
 
 
 def ensure_data_dirs(root: Path) -> None:
-    for rel in ("data/outbox", "data/inbox", "data/logs", "data/recordings", "data/samples", "data/vision"):
+    for rel in ("data/outbox", "data/inbox", "data/logs", "data/recordings", "data/samples"):
         (root / rel).mkdir(parents=True, exist_ok=True)
 
 

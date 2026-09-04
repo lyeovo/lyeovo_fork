@@ -29,10 +29,10 @@ class ValidationConfig:
     target_max_age_s: float = 3.0
     min_confidence: float = 0.4
     min_stability: float = 0.2
-    max_xy_range_m: float = 1.5
-    max_move_distance_m: float = 1.5
+    max_xy_range_m: float = 6.0        # 6 节 × 1m 平面臂全伸展半径
+    max_move_distance_m: float = 6.0   # 单次移动距离上限 = 最大可达半径
     min_joint_index: int = 1
-    max_joint_index: int = 16
+    max_joint_index: int = 6           # 机械臂共 6 个关节
     block_when_robot_busy: bool = True
 
 

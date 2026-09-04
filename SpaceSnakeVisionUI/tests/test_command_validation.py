@@ -36,8 +36,12 @@ def test_move_to_validation():
     res1 = validate_command("move_to", {"x": 0.35, "y": -0.10})
     assert res1.ok
 
-    # 越界坐标
-    res2 = validate_command("move_to", {"x": 2.5, "y": 0.0})
+    # 边界内（±6m 全伸展可达）
+    res_edge = validate_command("move_to", {"x": 6.0, "y": 0.0})
+    assert res_edge.ok
+
+    # 越界坐标（超出 ±6m）
+    res2 = validate_command("move_to", {"x": 6.5, "y": 0.0})
     assert not res2.ok
     assert "exceeds" in res2.reason
 
@@ -60,6 +64,14 @@ def test_rotate_arm_validation():
     # 正常
     res1 = validate_command("rotate_arm", {"joint_index": 2, "alpha_deg": 45.0})
     assert res1.ok
+
+    # 末关节（第 6 关节）合法
+    res_edge = validate_command("rotate_arm", {"joint_index": 6, "alpha_deg": 45.0})
+    assert res_edge.ok
+
+    # 超出 6 关节（越界）
+    res_over = validate_command("rotate_arm", {"joint_index": 7, "alpha_deg": 45.0})
+    assert not res_over.ok
 
     # 关节编号越界
     res2 = validate_command("rotate_arm", {"joint_index": 99, "alpha_deg": 45.0})

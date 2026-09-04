@@ -65,6 +65,21 @@ QLabel#StatusOnline {
     font-weight: 700;
     font-family: Consolas;
 }
+QLabel#StatusOffline {
+    color: #FF4D5A;
+    font-weight: 700;
+    font-family: Consolas;
+}
+QLabel#StatusWarn {
+    color: #FFC857;
+    font-weight: 700;
+    font-family: Consolas;
+}
+QLabel#StatusIdle {
+    color: #8FA6C8;
+    font-weight: 700;
+    font-family: Consolas;
+}
 QPushButton {
     background: #10224A;
     border: 1px solid #00E5FF;
