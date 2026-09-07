@@ -20,6 +20,7 @@ class NavigationWidget(QWidget):
         ("TASK", "🎯\nTASK", "任务发布与地图选点操纵"),
         ("CONTROL", "🦾\nCONTROL", "机械臂位姿拓扑与关节状态"),
         ("SYSTEM", "🖥\nSYSTEM", "系统诊断与健康状态监控"),
+        ("CHAIN", "🔗\nCHAIN", "链路控制台：手动启动/调试整条真实链"),
     ]
 
     def __init__(self) -> None:

@@ -26,6 +26,7 @@ from ..vision.pipeline import VisionPipeline
 from .log_console import LogConsoleWidget
 from .navigation import NavigationWidget
 from .pages.control_page import ControlPage
+from .pages.chain_page import ChainPage
 from .pages.mission_page import MissionPage
 from .pages.system_page import SystemPage
 from .pages.task_page import TaskPage
@@ -202,6 +203,10 @@ class MainWindow(QMainWindow):
         # Page 4: 【SYSTEM】系统监控
         self.page_system = SystemPage(self.log, self)
         self.stack.addWidget(self.page_system)
+
+        # Page 5: 【CHAIN】链路控制台（手动启动/调试整条真实链）
+        self.page_chain = ChainPage(self.log, self.project_root, self)
+        self.stack.addWidget(self.page_chain)
 
         center_row.addWidget(self.stack, stretch=1)
         main_layout.addLayout(center_row, stretch=1)
