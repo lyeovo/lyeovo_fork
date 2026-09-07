@@ -135,10 +135,9 @@ class MissionMapWidget(QWidget):
         if event.button() == Qt.LeftButton:
             pos = event.position() if hasattr(event, "position") else event.pos()
             x, y = self.pixel_to_world(pos.x(), pos.y())
-            # 限制在机械臂前方可达作业范围内 (X: ±MAX_REACH_M, Y: [0.0, MAX_REACH_M])
-            # 物理防护墙体位于后方 (Y <= 0)，严禁越界进入墙体
+            # 限制在机械臂可达作业范围内 (±MAX_REACH_M)
             clamped_x = round(max(-MAX_REACH_M, min(MAX_REACH_M, x)), 3)
-            clamped_y = round(max(0.0, min(MAX_REACH_M, y)), 3)
+            clamped_y = round(max(-MAX_REACH_M, min(MAX_REACH_M, y)), 3)
 
             # 优先检查是否点击了已有的目标靶标 (点击吸附与选择，容差半径 0.40m)
             clicked_obj_id = None
@@ -151,8 +150,7 @@ class MissionMapWidget(QWidget):
                     pos_x, pos_y = self.camera_to_world_coord(obj.pose_camera.position.x, obj.pose_camera.position.z)
 
                 if pos_x is not None and pos_y is not None:
-                    # 仅吸附位于前方 Y >= 0 的目标
-                    if pos_y >= 0.0 and math.hypot(pos_x - clamped_x, pos_y - clamped_y) <= 0.40:
+                    if math.hypot(pos_x - clamped_x, pos_y - clamped_y) <= 0.40:
                         clicked_obj_id = obj.target_id
                         clamped_x, clamped_y = round(pos_x, 3), round(pos_y, 3)
                         break
@@ -277,41 +275,6 @@ class MissionMapWidget(QWidget):
 
         ox, oy, sx, sy = self._get_origin_and_scale()
         base_pt = QPointF(ox, oy)
-
-        # ----------------- 绘制后方物理防护墙体 (Y <= 0 禁行区) -----------------
-        wall_top_y = oy
-        wall_height = h - wall_top_y
-        if wall_height > 0:
-            wall_rect = QRectF(0, wall_top_y, w, wall_height)
-            # 墙体基础填充（深灰红色工业防护警示底色）
-            painter.fillRect(wall_rect, QColor("#120B10"))
-
-            # 绘制斜向警告斑马条纹 (Hazard Stripes)
-            stripe_pen = QPen(QColor(255, 0, 85, 32), 2)
-            painter.setPen(stripe_pen)
-            stripe_spacing = 28
-            for sx_offset in range(-int(wall_height * 2), int(w) + int(wall_height), stripe_spacing):
-                p1 = QPointF(sx_offset, wall_top_y)
-                p2 = QPointF(sx_offset + wall_height, h)
-                painter.drawLine(p1, p2)
-
-            # 绘制坚固的物理墙体防护边界线 (Y = 0 实线 + 红色外发光)
-            glow_pen = QPen(QColor(255, 0, 85, 70), 5)
-            painter.setPen(glow_pen)
-            painter.drawLine(QPointF(0, wall_top_y), QPointF(w, wall_top_y))
-
-            wall_edge_pen = QPen(QColor("#FF0055"), 2)
-            painter.setPen(wall_edge_pen)
-            painter.drawLine(QPointF(0, wall_top_y), QPointF(w, wall_top_y))
-
-            # 墙体警示标牌文字
-            wall_font = QFont("Consolas", 8, QFont.Bold)
-            painter.setFont(wall_font)
-            painter.setPen(QColor(255, 60, 110, 220))
-            wall_label = "🧱 物理防护墙体 / PHYSICAL RESTRICTED WALL (Y ≤ 0) · 严禁越界 · 机械臂仅在前方 [-90°, +90°] 作业"
-            fm = painter.fontMetrics()
-            tw = fm.horizontalAdvance(wall_label)
-            painter.drawText(int((w - tw) / 2), int(wall_top_y + min(22, wall_height * 0.55)), wall_label)
 
         # 绘制网格与刻度 (每 GRID_STEP_M 一条线)
         grid_pen = QPen(QColor("#0A192F"), 1, Qt.DotLine)
@@ -521,41 +484,29 @@ class MissionMapWidget(QWidget):
         # ----------------- 左上角图例与方位角定义 -----------------
         painter.setPen(QColor(0, 229, 255, 180))
         painter.setFont(QFont("Consolas", 8))
-        painter.drawText(12, 20, "RADAR AZIMUTH: 0°=FWD(+Y) | +90°=RIGHT(+X) | -90°=LEFT(-X) | REAR: PHYSICAL WALL (Y≤0)")
+        painter.drawText(12, 20, "RADAR AZIMUTH: 0°=FWD(+Y) | +90°=RIGHT(+X) | -90°=LEFT(-X)")
 
         # ----------------- 绘制鼠标悬停坐标与方位角提示 -----------------
         if self.hover_coord is not None:
             hx, hy = self.hover_coord
             hpt = self.world_to_pixel(hx, hy)
-            in_wall = (hy < 0.0)
-
-            cross_color = QColor(255, 0, 85, 140) if in_wall else QColor(0, 229, 255, 90)
-            painter.setPen(QPen(cross_color, 1, Qt.DashLine))
+            painter.setPen(QPen(QColor(0, 229, 255, 90), 1, Qt.DashLine))
             painter.drawLine(QPointF(hpt.x(), 0), QPointF(hpt.x(), h))
             painter.drawLine(QPointF(0, hpt.y()), QPointF(w, hpt.y()))
 
-            if in_wall:
-                telemetry_str = f"CURSOR: X={hx:+.3f}m, Y={hy:+.3f}m | 🧱 墙体禁行区 (RESTRICTED WALL · Y<=0)"
-                box_pen = QPen(QColor("#FF0055"), 1)
-                box_brush = QColor(35, 10, 20, 230)
-                text_color = QColor("#FF4D7D")
-            else:
-                az_deg = math.degrees(math.atan2(hx, max(1e-6, hy)))
-                r_dist = math.hypot(hx, hy)
-                telemetry_str = f"CURSOR: X={hx:+.3f}m, Y={hy:+.3f}m | AZ: {az_deg:+.1f}° | R: {r_dist:.2f}m"
-                box_pen = QPen(QColor("#0E3B68"), 1)
-                box_brush = QColor(5, 12, 28, 200)
-                text_color = QColor("#00E5FF")
+            az_deg = math.degrees(math.atan2(hx, max(1e-6, hy)))
+            r_dist = math.hypot(hx, hy)
+            telemetry_str = f"CURSOR: X={hx:+.3f}m, Y={hy:+.3f}m | AZ: {az_deg:+.1f}° | R: {r_dist:.2f}m"
 
             fm = painter.fontMetrics()
             t_w = fm.horizontalAdvance(telemetry_str) + 16
             t_box = QRectF(w - t_w - 12, h - 26, t_w, 20)
-            painter.setPen(box_pen)
-            painter.setBrush(box_brush)
+            painter.setPen(QPen(QColor("#0E3B68"), 1))
+            painter.setBrush(QColor(5, 12, 28, 200))
             painter.drawRoundedRect(t_box, 3, 3)
             painter.setBrush(Qt.NoBrush)
 
-            painter.setPen(text_color)
+            painter.setPen(QColor("#00E5FF"))
             painter.drawText(t_box, Qt.AlignCenter, telemetry_str)
 
         painter.end()

@@ -115,10 +115,10 @@ class TaskCommandPanel(QWidget):
         f0 = QGridLayout(w_move_to)
         f0.setContentsMargins(0, 0, 0, 0)
         self.move_to_x = self._double_spin(-6.0, 6.0, 0.35, step=0.01, decimals=3, suffix=" m")
-        self.move_to_y = self._double_spin(0.0, 6.0, 0.20, step=0.01, decimals=3, suffix=" m")
+        self.move_to_y = self._double_spin(-6.0, 6.0, 0.00, step=0.01, decimals=3, suffix=" m")
         self._add_field(f0, 0, "目标 X", self.move_to_x)
         self._add_field(f0, 1, "目标 Y", self.move_to_y)
-        hint0 = QLabel("💡 提示：可在下方地图中点击快速选点（仅限前方 Y≥0，后方为墙体）")
+        hint0 = QLabel("💡 提示：可在下方地图中点击快速选点")
         hint0.setStyleSheet("color: #00E5FF; font-size: 11px;")
         f0.addWidget(hint0, 2, 0, 1, 2, Qt.AlignCenter)
         self.param_stack.addWidget(w_move_to)
@@ -225,12 +225,12 @@ class TaskCommandPanel(QWidget):
         return self.task_type_combo.currentData()
 
     def set_target_coordinate(self, x: float, y: float) -> None:
-        """从外部（如地图点击）快速填入坐标（后方墙体防护，Y >= 0）"""
+        """从外部（如地图点击）快速填入坐标"""
         idx = self.task_type_combo.findData("move_to")
         if idx >= 0 and self.task_type_combo.currentIndex() != idx:
             self.task_type_combo.setCurrentIndex(idx)
         self.move_to_x.setValue(x)
-        self.move_to_y.setValue(max(0.0, y))
+        self.move_to_y.setValue(y)
 
     def _double_spin(self, min_val: float, max_val: float, val: float, step: float = 0.01, decimals: int = 2, suffix: str = "") -> QDoubleSpinBox:
         spin = QDoubleSpinBox()

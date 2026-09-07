@@ -92,13 +92,6 @@ def validate_command(
             x, y = float(p["x"]), float(p["y"])
             if abs(x) > cfg.max_xy_range_m or abs(y) > cfg.max_xy_range_m:
                 return ValidationResult(False, f"Target coordinate ({x:.2f}, {y:.2f}) exceeds work range ±{cfg.max_xy_range_m}m", checks)
-            # 物理墙体约束：机械臂仅在前方 [-90°, +90°] 作业，Y < 0 为后方墙体禁行区
-            if y < 0.0:
-                return ValidationResult(
-                    False,
-                    f"Target coordinate y={y:.2f}m is behind the robot base (rear wall at Y<=0, arm restricted to forward [-90°, +90°])",
-                    checks,
-                )
         except (ValueError, TypeError):
             return ValidationResult(False, "Invalid numeric format for x or y", checks)
 
@@ -119,21 +112,6 @@ def validate_command(
             joint_idx = int(p["joint_index"])
             if joint_idx < cfg.min_joint_index or joint_idx > cfg.max_joint_index:
                 return ValidationResult(False, f"Joint index {joint_idx} out of range [{cfg.min_joint_index}, {cfg.max_joint_index}]", checks)
-
-            # J1 基座关节角度必须处于前向扇区 [-90°, +90°] 内，避免碰撞后方墙体
-            if joint_idx == 1 and command_type == "facing_arm":
-                for angle_key in ("theta_deg", "alpha_deg", "theta", "angle"):
-                    if angle_key in p:
-                        try:
-                            deg = float(p[angle_key])
-                            if deg < -90.0 or deg > 90.0:
-                                return ValidationResult(
-                                    False,
-                                    f"Base joint J1 facing angle {deg:.1f}° exceeds forward [-90°, +90°] sector (blocked by rear wall)",
-                                    checks,
-                                )
-                        except (ValueError, TypeError):
-                            pass
         except (ValueError, TypeError):
             return ValidationResult(False, "Invalid joint index", checks)
 

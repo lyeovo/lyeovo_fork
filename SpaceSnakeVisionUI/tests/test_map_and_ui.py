@@ -114,34 +114,4 @@ def test_target_click_coordinate_transformation(qapp):
     assert abs(pose_base.position.y - (ee_nominal_y + 0.35)) < 1e-3
 
 
-def test_mission_map_rear_wall_click_clamping(qapp):
-    """测试在地图后方墙体区 (Y < 0) 点击时，路点与选点坐标严格限制在 Y >= 0"""
-    from PySide6.QtCore import QPointF, Qt
-    from PySide6.QtGui import QMouseEvent
-
-    widget = MissionMapWidget()
-    widget.resize(600, 400)
-    widget.show()
-
-    # 在世界坐标 Y = -1.5m 处点击（位于后方墙体）
-    pt_wall = widget.world_to_pixel(0.5, -1.5)
-    ev = QMouseEvent(
-        QMouseEvent.MouseButtonPress,
-        pt_wall,
-        Qt.LeftButton,
-        Qt.LeftButton,
-        Qt.NoModifier,
-    )
-    selected_coords = []
-    widget.coordinateSelected.connect(lambda x, y: selected_coords.append((x, y)))
-    widget.mousePressEvent(ev)
-
-    assert len(selected_coords) == 1
-    sel_x, sel_y = selected_coords[0]
-    # Y 必须被截断在 0.0，绝不能小于 0
-    assert sel_y >= 0.0
-    assert abs(sel_y - 0.0) < 1e-3
-    assert abs(sel_x - 0.5) < 0.1
-
-
 
