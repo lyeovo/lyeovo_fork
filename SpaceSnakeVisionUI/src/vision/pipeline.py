@@ -66,9 +66,27 @@ class VisionPipeline:
                 cv2.polylines(image, [pts], True, (0, 180, 255), 2)
             cx, cy = obj.center_pixel
             cv2.drawMarker(image, (cx, cy), color, cv2.MARKER_CROSS, 24, 2)
-            label = f"{obj.target_id} {obj.class_name} z={obj.depth_m or 0:.3f}m"
+
+            pose_cam = getattr(obj, "pose_camera", None)
+            has_valid_pos = (
+                pose_cam is not None
+                and getattr(pose_cam, "position", None) is not None
+                and getattr(pose_cam.position, "z", 0.0) is not None
+                and pose_cam.position.z > 0.02
+                and np.isfinite(pose_cam.position.z)
+            )
+
+            if has_valid_pos:
+                px = pose_cam.position.x
+                py = pose_cam.position.y
+                pz = pose_cam.position.z
+                label = f"{obj.target_id} X:{px:+.2f} Y:{py:+.2f} Z:{pz:.2f}m"
+            else:
+                label = f"{obj.target_id} {obj.class_name} z={obj.depth_m or 0:.3f}m"
             cv2.putText(image, label, (x1, max(18, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
-            if obj.detection_mode in ("marker", "yolo_marker") and obj.status == "POSE_6DOF" and intrinsics is not None:
+
+            # 只要具有有效 3D 相对位置，无论 6DoF 还是 3DoF，均绘制空间三维坐标系指示
+            if has_valid_pos and intrinsics is not None:
                 VisionPipeline.draw_pose_axes(image, obj, intrinsics)
 
     @staticmethod
@@ -81,10 +99,20 @@ class VisionPipeline:
     def draw_pose_axes(image, obj, intrinsics, axis_length_m: float = 0.04):
         pose = obj.pose_camera
         origin = np.array([pose.position.x, pose.position.y, pose.position.z], dtype=float)
-        if not np.all(np.isfinite(origin)) or origin[2] <= 0:
+        if not np.all(np.isfinite(origin)) or origin[2] <= 0.01:
             return
-        quat = pose.orientation_quat
-        rotation = Rotation.from_quat([quat.x, quat.y, quat.z, quat.w]).as_matrix()
+
+        # 提取旋转姿态；若是 3-DoF 或无有效四元数，默认对齐相机基底
+        quat = getattr(pose, "orientation_quat", None)
+        rotation = np.eye(3)
+        if quat is not None:
+            q_arr = np.array([quat.x, quat.y, quat.z, quat.w], dtype=float)
+            if np.all(np.isfinite(q_arr)) and np.linalg.norm(q_arr) > 1e-4:
+                try:
+                    rotation = Rotation.from_quat(q_arr).as_matrix()
+                except Exception:
+                    rotation = np.eye(3)
+
         axis_points = np.vstack(
             [
                 origin,
@@ -95,7 +123,7 @@ class VisionPipeline:
         )
         pixels = []
         for point in axis_points:
-            if point[2] <= 0:
+            if point[2] <= 0.005:
                 return
             u = int(round(intrinsics.fx * point[0] / point[2] + intrinsics.cx))
             v = int(round(intrinsics.fy * point[1] / point[2] + intrinsics.cy))

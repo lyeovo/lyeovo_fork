@@ -4,13 +4,13 @@ from typing import Any, Dict, Optional
 from ..models import Pose3D, TaskCommand, new_command_id
 
 
-# 单一终点放置区（与 mission_map.GOAL_ZONE 对齐）：地图右侧，中心 map(x=4.0, y=2.0) → base(x=4.0, z=2.0)
+# 单一终点放置区（与 mission_map.GOAL_ZONE 对齐）：地图右侧，中心 map(x=4.0, y=2.0)
 ZONE_POSES = {
     "Goal_Zone": Pose3D(frame_id="robot_base"),
 }
 ZONE_POSES["Goal_Zone"].position.x = 4.0
-ZONE_POSES["Goal_Zone"].position.y = 0.10
-ZONE_POSES["Goal_Zone"].position.z = 2.0
+ZONE_POSES["Goal_Zone"].position.y = 2.0
+ZONE_POSES["Goal_Zone"].position.z = 0.0
 
 
 def build_task_command(
@@ -94,7 +94,7 @@ def camera_to_base_pose(
     world_y = cur_y + cam_z * math.sin(accum_angle) - cam_x * math.cos(accum_angle)
     return Pose3D(
         frame_id="robot_base",
-        position=Vector3(x=round(world_x, 4), y=round(world_y, 4), z=round(pose_camera.position.y, 4)),
+        position=Vector3(x=round(world_x, 4), y=round(world_y, 4), z=0.0),
         orientation_euler=Euler(roll=0.0, pitch=0.0, yaw=round(accum_angle, 4)),
     )
 

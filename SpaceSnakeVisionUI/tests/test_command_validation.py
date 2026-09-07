@@ -32,11 +32,16 @@ def test_estop_blocks_regular_command():
 
 
 def test_move_to_validation():
-    # 有效坐标
-    res1 = validate_command("move_to", {"x": 0.35, "y": -0.10})
+    # 有效坐标（前方 Y >= 0）
+    res1 = validate_command("move_to", {"x": 0.35, "y": 0.20})
     assert res1.ok
 
-    # 边界内（±6m 全伸展可达）
+    # 后方坐标（Y < 0，后方有墙体，必须被安全拦截）
+    res_wall = validate_command("move_to", {"x": 0.35, "y": -0.10})
+    assert not res_wall.ok
+    assert "rear wall" in res_wall.reason
+
+    # 边界内（±6m 全伸展可达，Y=0.0 为墙体边界线）
     res_edge = validate_command("move_to", {"x": 6.0, "y": 0.0})
     assert res_edge.ok
 
@@ -48,6 +53,19 @@ def test_move_to_validation():
     # 缺少参数
     res3 = validate_command("move_to", {})
     assert not res3.ok
+
+
+def test_facing_arm_j1_sector_limit():
+    # J1 在 [-90°, +90°] 前向扇区内合法
+    res1 = validate_command("facing_arm", {"joint_index": 1, "theta_deg": 45.0})
+    assert res1.ok
+    res2 = validate_command("facing_arm", {"joint_index": 1, "theta_deg": -90.0})
+    assert res2.ok
+
+    # J1 超出 [-90°, +90°] 被后方墙体安全拦截
+    res3 = validate_command("facing_arm", {"joint_index": 1, "theta_deg": 120.0})
+    assert not res3.ok
+    assert "rear wall" in res3.reason
 
 
 def test_move_along_validation():

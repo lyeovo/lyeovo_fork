@@ -108,76 +108,34 @@ class YoloMarkerDetector(DetectorBase):
         bbox_bearing = _bearing_from_dots([center], frame.intrinsics)
         rough_depth = _median_depth_in_mask(frame.depth_image, board_mask, [x1, y1, x2, y2])
 
-        dot_image = frame.infrared_image if getattr(frame, "infrared_image", None) is not None else frame.color_image
-        gray = cv2.cvtColor(dot_image, cv2.COLOR_BGR2GRAY) if dot_image.ndim == 3 else dot_image
-        roi_gray = gray[y1:y2, x1:x2]
-        roi_mask = board_mask[y1:y2, x1:x2] if board_mask is not None else None
-        circle_cfg, adaptive_threshold = _auto_circle_cfg(roi_gray, roi_mask, self.circle_cfg, self.adaptive_dot_threshold)
-        dots_roi = _detect_circles(roi_gray, circle_cfg, max_candidates=32)
-        dots_roi = _filter_dots_by_mask(dots_roi, roi_mask)
-        dot_source = "infrared" if getattr(frame, "infrared_image", None) is not None else "color"
-        if len(dots_roi) < self.min_dots_for_bearing and dot_source == "infrared":
-            color_gray = cv2.cvtColor(frame.color_image, cv2.COLOR_BGR2GRAY) if frame.color_image.ndim == 3 else frame.color_image
-            roi_gray = color_gray[y1:y2, x1:x2]
-            circle_cfg, adaptive_threshold = _auto_circle_cfg(roi_gray, roi_mask, self.circle_cfg, self.adaptive_dot_threshold)
-            dots_roi = _detect_circles(roi_gray, circle_cfg, max_candidates=32)
-            dots_roi = _filter_dots_by_mask(dots_roi, roi_mask)
-            dot_source = "color_fallback"
-        dots = [(u + x1, v + y1) for u, v in dots_roi]
-        bearing = _bearing_from_dots(dots, frame.intrinsics) if len(dots) >= self.min_dots_for_bearing else bbox_bearing
-        points_3d, valid_dots = _points_from_depth(dots, frame.depth_image, frame.intrinsics) if dots else (np.empty((0, 3)), [])
-
-        pose = Pose3D(frame_id="camera_left", position=Vector3(), orientation_quat=Quaternion())
-        depth_m = rough_depth
-        status = "BEARING_ONLY"
-        match_error = plane_rmse = pose_rmse = None
-        pose_method = "yolo_bbox_bearing"
         stable_id = target_hint
-        confidence = float(np.clip(0.65 * yolo_conf + 0.25, 0.0, 0.95))
+        confidence = float(np.clip(yolo_conf, 0.0, 1.0))
 
-        if 0 < len(valid_dots) < self.min_dots_for_pose:
-            status = "PARTIAL_DEPTH"
-        if len(valid_dots) >= self.min_dots_for_pose:
-            try:
-                match_targets = self._target_subset(target_hint)
-                target_id, match_error, matched_template, matched_measured, plane_rmse = _match_template(
-                    points_3d,
-                    match_targets,
-                    self.max_match_error_m,
-                    self.allow_rotation,
-                    self.unknown_if_error_larger,
-                )
-                position, quat, pose_rmse, pose_method = _estimate_pose(matched_template, matched_measured, points_3d)
-                stable_id = target_id if target_id != "unknown" else target_hint
-                quat = self._stabilize_quaternion(stable_id, quat)
-                euler = Rotation.from_quat(quat).as_euler("xyz", degrees=False)
-                pose = Pose3D(
-                    frame_id="camera_left",
-                    position=Vector3(float(position[0]), float(position[1]), float(position[2])),
-                    orientation_euler=Euler(float(euler[0]), float(euler[1]), float(euler[2])),
-                    orientation_quat=Quaternion(float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3])),
-                )
-                depth_m = float(position[2])
-                self._last_pose_by_target[stable_id] = (pose, depth_m, frame.timestamp)
-                pose_conf = _confidence(len(valid_dots), max(len(dots), 1), match_error, plane_rmse, pose_rmse)
-                confidence = float(np.clip(0.4 * yolo_conf + 0.6 * pose_conf, 0.0, 1.0))
-                status = "POSE_6DOF" if confidence >= 0.6 else "PARTIAL_DEPTH"
-            except Exception as exc:
-                pose_method = f"fine_pose_failed:{exc}"
-                status = "PARTIAL_DEPTH"
+        if rough_depth is not None and rough_depth > 0.02 and np.isfinite(rough_depth):
+            u_c, v_c = float(center[0]), float(center[1])
+            fx, fy = float(frame.intrinsics.fx), float(frame.intrinsics.fy)
+            cx, cy = float(frame.intrinsics.cx), float(frame.intrinsics.cy)
+            cam_x = float((u_c - cx) * float(rough_depth) / fx)
+            cam_y = float((v_c - cy) * float(rough_depth) / fy)
+            cam_z = float(rough_depth)
+            pos_3d = Vector3(cam_x, cam_y, cam_z)
+            status = "AVAILABLE"
+            depth_m = float(rough_depth)
+            pose_method = "yolo_depth_deprojection"
+        else:
+            pos_3d = Vector3()
+            status = "BEARING_ONLY"
+            depth_m = None
+            pose_method = "yolo_bbox_bearing"
 
-        if status != "POSE_6DOF":
-            held = self._last_pose_by_target.get(stable_id)
-            if held is not None:
-                held_pose, held_depth, held_ts = held
-                if frame.timestamp - held_ts <= self.pose_hold_seconds:
-                    pose = held_pose
-                    depth_m = held_depth
-                    status = "POSE_6DOF"
-                    confidence = max(confidence, 0.55)
-                    pose_method = "held_last_stable_pose"
+        pose = Pose3D(
+            frame_id="camera_left",
+            position=pos_3d,
+            orientation_quat=Quaternion(0.0, 0.0, 0.0, 1.0),
+            orientation_euler=Euler(0.0, 0.0, 0.0),
+        )
 
-        bbox = _bbox_from_dots(dots, w, h) if dots else _bbox_from_quad(board_quad, w, h)
+        bbox = _bbox_from_quad(board_quad, w, h) if board_quad else [x1, y1, x2, y2]
         obj = DetectedObject(
             target_id=stable_id,
             timestamp=frame.timestamp,
@@ -188,39 +146,25 @@ class YoloMarkerDetector(DetectorBase):
             confidence=confidence,
             stability_score=confidence,
             bbox_xyxy=bbox,
-            center_pixel=[int(round(bearing["pixel_center"][0])), int(round(bearing["pixel_center"][1]))],
+            center_pixel=[int(round(center[0])), int(round(center[1]))],
             depth_m=depth_m,
             pose_camera=pose,
             status=status,
         )
-        obj.bearing = bearing
+        obj.bearing = bbox_bearing
         obj.quality = {
-            "num_dots": len(dots),
-            "valid_depth_points": len(valid_dots),
             "confidence": confidence,
             "yolo_confidence": yolo_conf,
             "yolo_class_name": class_name,
-            "dot_source": dot_source,
             "board_quad": board_quad,
-            "board_mask_enabled": self.use_board_mask,
-            "board_mask_area_px": int(np.count_nonzero(board_mask)) if board_mask is not None else None,
-            "adaptive_threshold": adaptive_threshold,
             "rough_distance_m": rough_depth,
-            "bearing": bearing,
-            "pose_available": status == "POSE_6DOF",
-            "match_error_m": match_error,
-            "plane_rmse_m": plane_rmse,
-            "pose_rmse_m": pose_rmse,
+            "bearing": bbox_bearing,
+            "pose_available": status == "AVAILABLE",
             "pose_method": pose_method,
             "json_status": status,
-            "pose": None if status != "POSE_6DOF" else {
+            "pose": None if status != "AVAILABLE" else {
                 "position": {"x": pose.position.x, "y": pose.position.y, "z": pose.position.z},
-                "orientation": {
-                    "qx": pose.orientation_quat.x,
-                    "qy": pose.orientation_quat.y,
-                    "qz": pose.orientation_quat.z,
-                    "qw": pose.orientation_quat.w,
-                },
+                "orientation": {"qx": 0.0, "qy": 0.0, "qz": 0.0, "qw": 1.0},
             },
         }
         return obj

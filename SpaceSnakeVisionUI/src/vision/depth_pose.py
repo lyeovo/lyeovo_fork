@@ -3,7 +3,7 @@ from typing import Optional, Tuple
 import numpy as np
 
 from ..camera.base_camera import CameraIntrinsics
-from ..models import Euler, Pose3D, Vector3
+from ..models import Euler, Pose3D, Quaternion, Vector3
 from ..utils.geometry import deproject_pixel
 
 
@@ -24,4 +24,13 @@ def pose_from_depth(depth_image: np.ndarray | None, center: Tuple[int, int], int
     if depth is None:
         return Pose3D(position=Vector3()), None, "DEPTH_INVALID"
     x, y, z = deproject_pixel(center, depth, intr.fx, intr.fy, intr.cx, intr.cy)
-    return Pose3D(position=Vector3(x, y, z), orientation_euler=Euler()), depth, "AVAILABLE"
+    return (
+        Pose3D(
+            position=Vector3(float(x), float(y), float(z)),
+            orientation_euler=Euler(),
+            orientation_quat=Quaternion(0.0, 0.0, 0.0, 1.0),
+        ),
+        depth,
+        "AVAILABLE",
+    )
+
