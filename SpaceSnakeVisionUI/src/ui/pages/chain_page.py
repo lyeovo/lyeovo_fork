@@ -111,6 +111,9 @@ class ChainPage(QWidget):
         self.ed_tx = self._grid_field(ag, 3, 0, "测试目标 x", "1.2")
         self.ed_ty = self._grid_field(ag, 3, 2, "测试目标 y", "0.8")
         self.ed_tth = self._grid_field(ag, 4, 0, "测试目标 θ (rad)", "0")
+        self.cb_run = QCheckBox("服务端运行参数 run（0=暂停电控驱动，缺省开）")
+        self.cb_run.setChecked(True)               # 服务端受控运行参数，默认 True；0=暂停(不重连)
+        ag.addWidget(self.cb_run, 5, 0, 1, 4)
         self._add_ctrl_row(algo, "algo", ag)
         v.addWidget(algo)
 
@@ -246,16 +249,18 @@ class ChainPage(QWidget):
         eip = self.ed_cli_ip.text().strip(); eport = self.ed_cli_port.text().strip()
         opts = (f"'outbox','{out}','inbox','{inn}','method','{m}',"
                 f"'snapshot_m',{snap},'approach_dist',{ad},'verbose',true")
-        # elec_host 非空=每任务后下发电控 20 参帧(需电控已启动，失败容忍)；空=纯仿真不连电控
+        # elec_host 非空=每任务后下发电控 26 参帧(需电控已启动，失败容忍)；空=纯仿真不连电控
         if eip:
             opts += f",'elec_host','{eip}','elec_port',{int(eport)}"
+            opts += f",'elec_run',{1 if self.cb_run.isChecked() else 0}"   # 服务端运行参数：0=暂停电控驱动
         run = (f"addpath('{repo}'); addpath(fullfile('{repo}','ArmSimulator2D'));"
                f"m=createArmModel(struct('N',{int(N)},'L_seg',{float(L)},"
                f"'obstacles',struct('rects',[],'circles',[])));"
                f"runTaskLoop(m, struct({opts}))")
         self._start_qprocess("algo", "matlab", ["-batch", run])
         self._log(f"[algo] 启动 MATLAB runTaskLoop (method={m}, N={N}, "
-                  f"elec={ (f'{eip}:{eport}') if eip else 'off(仿真)' })")
+                  f"elec={ (f'{eip}:{eport}') if eip else 'off(仿真)' }, "
+                  f"run={1 if self.cb_run.isChecked() else 0})")
 
     def _start_qprocess(self, key: str, program: str, args) -> None:
         p = self._procs.pop(key, None)
