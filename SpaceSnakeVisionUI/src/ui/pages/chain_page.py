@@ -106,14 +106,16 @@ class ChainPage(QWidget):
         self.ed_N = self._grid_field(ag, 0, 2, "关节数 N", "6")
         self.ed_L = self._grid_field(ag, 1, 0, "杆长 L (m)", "1.04393")
         self.ed_snap = self._grid_field(ag, 1, 2, "snapshot_m（每累积步数输出）", "10")
-        self.ed_dec = self._grid_field(ag, 2, 0, "抽稀 n（每 n 步下发一组）", "2")
+        self.ed_dec = self._grid_field(ag, 2, 0, "抽稀 n（>=段长=每段一次下发）", "1")
         self.ed_ad = self._grid_field(ag, 2, 2, "approach_dist (m)", "0.15")
         self.ed_tx = self._grid_field(ag, 3, 0, "测试目标 x", "1.2")
         self.ed_ty = self._grid_field(ag, 3, 2, "测试目标 y", "0.8")
         self.ed_tth = self._grid_field(ag, 4, 0, "测试目标 θ (rad)", "0")
+        self.ed_speed = self._grid_field(ag, 5, 0, "电机角速度 (度/秒)", "1.8")
+        self.ed_extra = self._grid_field(ag, 5, 2, "每次驱动额外等待 (秒)", "5")
         self.cb_run = QCheckBox("服务端运行参数 run（0=暂停电控驱动，缺省开）")
         self.cb_run.setChecked(True)               # 服务端受控运行参数，默认 True；0=暂停(不重连)
-        ag.addWidget(self.cb_run, 5, 0, 1, 4)
+        ag.addWidget(self.cb_run, 6, 0, 1, 4)
         self._add_ctrl_row(algo, "algo", ag)
         v.addWidget(algo)
 
@@ -124,8 +126,8 @@ class ChainPage(QWidget):
         self.ed_srv_bind = self._grid_field(eg, 0, 2, "服务器绑定地址", "0.0.0.0")
         self.ed_srv_interval = self._grid_field(eg, 1, 0, "STATE 帧间隔 (s)", "0.05")
         self.ed_srv_script = self._grid_field(eg, 1, 2, "mock_elec_server.py", "D:\\thuedu\\26夏\\mock_elec_server.py")
-        self.ed_cli_ip = self._grid_field(eg, 2, 0, "下发连接 IP(服务端实网IP)", "10.55.145.80")
-        self.ed_cli_port = self._grid_field(eg, 2, 2, "下发端口", "9100")
+        self.ed_cli_ip = self._grid_field(eg, 2, 0, "算法推帧IP(本机实网IP)", "10.84.160.80")
+        self.ed_cli_port = self._grid_field(eg, 2, 2, "算法推帧端口(Interpreter连此)", "9101")
         self.ed_step = self._grid_field(eg, 3, 0, "电机步进/圈", "40000")
         self.ed_servo_open = self._grid_field(eg, 3, 2, "舵机开角度 (度)", "90")
         self.ed_servo_close = self._grid_field(eg, 4, 0, "舵机关角度 (度)", "0")
@@ -159,6 +161,21 @@ class ChainPage(QWidget):
         for i, b in enumerate((b_all, b_stop, b_inj)):
             stv.addWidget(b, i, 1)
         v.addWidget(st)
+
+        # 模块④ 直接参数下发（测试）：直接改单个关节角度，用于链路/电控联调
+        jd = self._module_group("模块④ 直接参数下发（测试）· 单关节角度")
+        jg = QGridLayout(); jg.setHorizontalSpacing(10); jg.setVerticalSpacing(6)
+        self.ed_joint_idx = self._grid_field(jg, 0, 0, "关节号 (1..N)", "1")
+        self.ed_joint_ang = self._grid_field(jg, 0, 2, "绝对角 (deg)", "0")
+        self.ed_joint_dlt = self._grid_field(jg, 1, 0, "相对角 (deg)", "0")
+        b_abs = QPushButton("▶ 下发单关节绝对角 (facing_arm)")
+        b_rel = QPushButton("▶ 下发单关节相对角 (rotate_arm)")
+        b_abs.clicked.connect(self.inject_joint_abs)
+        b_rel.clicked.connect(self.inject_joint_delta)
+        jg.addWidget(b_abs, 1, 2)
+        jg.addWidget(b_rel, 2, 0, 1, 3)
+        jd.layout().addLayout(jg)
+        v.addWidget(jd)
 
         # 日志（放竖向 QSplitter，可拖拽调大小，不再限高 200）
         self.chain_log = QPlainTextEdit(); self.chain_log.setReadOnly(True)
@@ -246,21 +263,28 @@ class ChainPage(QWidget):
         out = self.ed_out.text().strip(); inn = self.ed_in.text().strip()
         m = self.cb_method.currentText(); N = self.ed_N.text().strip(); L = self.ed_L.text().strip()
         snap = self.ed_snap.text().strip(); ad = self.ed_ad.text().strip()
+        dec = self.ed_dec.text().strip() or "1"
+        spd = self.ed_speed.text().strip() or "1.8"
+        ext = self.ed_extra.text().strip() or "5"
         eip = self.ed_cli_ip.text().strip(); eport = self.ed_cli_port.text().strip()
         opts = (f"'outbox','{out}','inbox','{inn}','method','{m}',"
                 f"'snapshot_m',{snap},'approach_dist',{ad},'verbose',true")
-        # elec_host 非空=每任务后下发电控 26 参帧(需电控已启动，失败容忍)；空=纯仿真不连电控
+        # elec_host 非空=每任务后下发电控 26 参帧；空=纯仿真不连电控。
+        # 真实链：本地(视觉/算法)=服务端推帧，dSPACE Interpreter=客户端连入收帧 → elec_mode='push'
         if eip:
             opts += f",'elec_host','{eip}','elec_port',{int(eport)}"
-            opts += f",'elec_run',{1 if self.cb_run.isChecked() else 0}"   # 服务端运行参数：0=暂停电控驱动
+            opts += f",'elec_run',{1 if self.cb_run.isChecked() else 0}"   # 服务端运行参数：0=暂停
+            opts += f",'elec_mode','push'"    # 本地起 ServerSocket 推帧给 Interpreter 客户端
+            opts += f",'elec_decimate',{int(float(dec))}"   # 抽稀：>=段长则每段一次下发总目标角
+            opts += f",'elec_speed_dps',{float(spd)},'elec_extra_s',{float(ext)}"  # 等待：最长臂运动时间+额外
         run = (f"addpath('{repo}'); addpath(fullfile('{repo}','ArmSimulator2D'));"
                f"m=createArmModel(struct('N',{int(N)},'L_seg',{float(L)},"
                f"'obstacles',struct('rects',[],'circles',[])));"
                f"runTaskLoop(m, struct({opts}))")
         self._start_qprocess("algo", "matlab", ["-batch", run])
         self._log(f"[algo] 启动 MATLAB runTaskLoop (method={m}, N={N}, "
-                  f"elec={ (f'{eip}:{eport}') if eip else 'off(仿真)' }, "
-                  f"run={1 if self.cb_run.isChecked() else 0})")
+                  f"elec={ (f'push:{eport}') if eip else 'off(仿真)' }, "
+                  f"run={1 if self.cb_run.isChecked() else 0}, decimate={int(float(dec))})")
 
     def _start_qprocess(self, key: str, program: str, args) -> None:
         p = self._procs.pop(key, None)
@@ -354,6 +378,37 @@ class ChainPage(QWidget):
         p = Path(out); p.mkdir(parents=True, exist_ok=True)
         (p / f"{cid}.json").write_text(json.dumps(cmd, ensure_ascii=False, indent=2), encoding="utf-8")
         self._log(f"[inject] {cid} → {out}")
+
+    def _inject_joint(self, cmd_type: str, param_key: str, value: float, idx: int) -> None:
+        """直接下发单关节命令（测试用）：facing_arm=绝对角, rotate_arm=相对角。"""
+        out = self.ed_out.text().strip()
+        cid = f"CMD-{cmd_type.upper()}-{datetime.datetime.now().strftime('%H%M%S')}"
+        cmd = {"schema_version": "2.0", "command_id": cid, "timestamp": datetime.datetime.now().timestamp(),
+               "source": "SpaceSnakeVisionUI", "command_type": cmd_type,
+               "params": {"joint_index": int(idx), param_key: float(value)},
+               "motion_params": {}, "selected_target": None, "destination": {},
+               "safety": {"allow_execute": True, "estop_active": False}}
+        p = Path(out); p.mkdir(parents=True, exist_ok=True)
+        (p / f"{cid}.json").write_text(json.dumps(cmd, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._log(f"[inject] {cid} {cmd_type} joint={idx} {param_key}={value} → {out}")
+
+    def inject_joint_abs(self) -> None:
+        """下发单关节绝对角（facing_arm, params.joint_index + theta_deg）。"""
+        try:
+            idx = int(float(self.ed_joint_idx.text().strip() or "1"))
+            ang = float(self.ed_joint_ang.text().strip() or "0")
+        except ValueError:
+            self._log("[inject] 关节号/绝对角 输入非法"); return
+        self._inject_joint("facing_arm", "theta_deg", ang, idx)
+
+    def inject_joint_delta(self) -> None:
+        """下发单关节相对角（rotate_arm, params.joint_index + alpha_deg）。"""
+        try:
+            idx = int(float(self.ed_joint_idx.text().strip() or "1"))
+            dlt = float(self.ed_joint_dlt.text().strip() or "0")
+        except ValueError:
+            self._log("[inject] 关节号/相对角 输入非法"); return
+        self._inject_joint("rotate_arm", "alpha_deg", dlt, idx)
 
     def _log(self, msg: str) -> None:
         self.chain_log.appendPlainText(f"[{_ts()}] {msg}")

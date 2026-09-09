@@ -541,7 +541,14 @@ class MainWindow(QMainWindow):
 
         gripper_map = {0: "HOLDING", 1: "OPEN", 2: "CLOSED"}
         g = getattr(rob, "gripper", None)
-        if g in gripper_map:
+        # 兼容：gripper 应为标量(0/1/2)；某些遥测源可能填成 list/其它，需先归一化再查表，
+        # 否则 list 作为 dict 键会抛 "unhashable type: 'list'"。
+        if isinstance(g, list):
+            # 取列表首个元素作为夹爪状态（容错：如 [x,y] 或空[]）
+            g = g[0] if g and not isinstance(g[0], (list, dict)) else None
+        elif not isinstance(g, (int, float, str)) and g is not None:
+            g = None
+        if isinstance(g, (int, float, str)) and g in gripper_map:
             kwargs["gripper_state"] = gripper_map[g]
 
         if kwargs:
